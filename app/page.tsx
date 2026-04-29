@@ -23,50 +23,21 @@ const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
   { id: "strip", label: "Film Strip", detail: "Compact horizontal preview" },
 ];
 
-const quickActions = [
-  { title: "Smart Scan", detail: "Use camera permission to capture fresh document shots." },
-  { title: "Photo Collage", detail: "Select multiple images and export a polished collage." },
-  { title: "PDF Export", detail: "Turn scanned pages into a single downloadable PDF." },
-];
-
-const tools = [
-  "ID cards",
-  "Homework sheets",
-  "Contracts",
-  "Whiteboards",
-  "Travel docs",
-  "Invoices",
-];
-
-function iconWrap(icon: string, tint: string) {
-  return (
-    <span
-      className="inline-flex h-11 w-11 items-center justify-center rounded-2xl text-xl shadow-sm"
-      style={{ background: tint }}
-    >
-      {icon}
-    </span>
-  );
-}
-
 export default function Home() {
   const [items, setItems] = useState<ScanItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
-  const [statusMessage, setStatusMessage] = useState("Ready to scan, upload, and organize.");
+  const [statusMessage, setStatusMessage] = useState("Ready.");
   const [cropOpen, setCropOpen] = useState(false);
   const [cropAspectId, setCropAspectId] = useState("a4");
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const mobileCameraInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
@@ -79,11 +50,6 @@ export default function Home() {
       { id: "11", label: "1:1", ratio: 1 },
     ],
     []
-  );
-
-  const activeItem = useMemo(
-    () => items.find((item) => item.id === activeId) ?? null,
-    [activeId, items]
   );
 
   const selectedItems = useMemo(
@@ -136,7 +102,6 @@ export default function Home() {
     }));
 
     setItems((current) => [...nextItems, ...current]);
-    setActiveId((current) => current ?? nextItems[0].id);
     setSelectedIds((current) => {
       const ids = nextItems.map((item) => item.id);
       return Array.from(new Set([...ids, ...current]));
@@ -319,19 +284,16 @@ export default function Home() {
     });
 
     setSelectedIds((current) => current.filter((itemId) => itemId !== id));
-    setActiveId((current) => {
-      if (current !== id) return current;
-      const next = items.find((item) => item.id !== id);
-      return next?.id ?? null;
-    });
   }
 
   async function exportPdf() {
-    const exportList = selectedItems.length > 0 ? selectedItems : items;
-    if (exportList.length === 0) return;
+    if (selectedItems.length === 0) {
+      setStatusMessage("Select pages to merge.");
+      return;
+    }
 
     setStatusMessage("Building your PDF...");
-    const pdfBytes = await imagesToPDF(exportList.map((item) => item.file));
+    const pdfBytes = await imagesToPDF(selectedItems.map((item) => item.file));
     const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
     const url = URL.createObjectURL(pdfBlob);
     const anchor = document.createElement("a");
@@ -358,17 +320,6 @@ export default function Home() {
     setStatusMessage("Collage exported.");
   }
 
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setIsDragging(false);
-    void handlePickedFiles(event.dataTransfer.files);
-  }
-
-  const storageLabel =
-    items.length === 0
-      ? "No files yet"
-      : `${items.length} page${items.length > 1 ? "s" : ""} in workspace`;
-
   return (
     <div className="min-h-screen px-4 py-4 text-slate-900 sm:px-6 lg:px-8">
       <input
@@ -382,214 +333,35 @@ export default function Home() {
           event.target.value = "";
         }}
       />
-      <input
-        ref={mobileCameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(event) => {
-          void handlePickedFiles(event.target.files);
-          event.target.value = "";
-        }}
-      />
 
-      <div className="mx-auto grid max-w-7xl gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="glass-panel soft-scrollbar flex flex-col gap-6 rounded-[28px] p-5 lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)] lg:overflow-auto">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-linear-to-br from-emerald-400 via-teal-400 to-sky-500 text-lg font-semibold text-white">
-              FS
-            </div>
-            <div>
-              <div className="display-font text-2xl font-semibold">FreeScanner</div>
-              <p className="text-sm text-slate-500">Scan, organize, export</p>
-            </div>
-          </div>
-
-          <nav className="space-y-2 text-sm">
-            {[
-              ["Workspace", "Active tray and previews"],
-              ["Camera", "Use mobile or laptop lens"],
-              ["Collages", "Compose selected images"],
-              ["Exports", "PDF and image downloads"],
-            ].map(([label, detail], index) => (
-              <div
-                key={label}
-                className={`rounded-2xl border px-4 py-3 ${
-                  index === 0
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200/70 bg-white text-slate-700"
-                }`}
-              >
-                <div className="font-semibold">{label}</div>
-                <div className="mt-1 text-xs text-slate-500">{detail}</div>
-              </div>
-            ))}
-          </nav>
-
-          <div className="rounded-[24px] border border-sky-100 bg-linear-to-br from-sky-950 via-slate-900 to-teal-950 p-5 text-white shadow-xl shadow-sky-900/10">
-            <p className="text-xs uppercase tracking-[0.3em] text-emerald-200">Smart Capture</p>
-            <h2 className="mt-3 display-font text-3xl leading-tight">
-              Built for quick document cleanup on phones and laptops.
-            </h2>
-            <p className="mt-3 text-sm text-slate-300">
-              Grant camera permission to scan documents live, or upload existing images and PDFs.
-            </p>
-            <button
-              onClick={() => void handleCameraOpen()}
-              className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 font-semibold text-slate-950 transition hover:bg-emerald-300"
-            >
-              Open Camera
-            </button>
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200/80 bg-white p-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Scan Tray</h3>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">{storageLabel}</span>
-            </div>
-            <div className="mt-4 grid gap-3">
-              {items.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-                  Your captured pages will appear here.
-                </div>
-              ) : (
-                items.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveId(item.id)}
-                    className={`flex items-center gap-3 rounded-2xl border p-2 text-left transition ${
-                      activeId === item.id
-                        ? "border-emerald-300 bg-emerald-50"
-                        : "border-white bg-white hover:border-slate-200"
-                    }`}
-                  >
-                    <img src={item.previewUrl} alt={item.name} className="h-16 w-12 rounded-xl object-cover" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-800">{item.name}</div>
-                      <div className="mt-1 text-xs capitalize text-slate-500">{item.kind.replace("-", " ")}</div>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </aside>
-
+      <div className="mx-auto max-w-7xl">
         <main className="space-y-4">
-          <header className="glass-panel rounded-[28px] px-5 py-4 sm:px-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <header className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-linear-to-br from-emerald-400 via-teal-400 to-sky-500 text-lg font-semibold text-white">
+                FS
+              </div>
               <div>
-                <p className="text-xs uppercase tracking-[0.25em] text-sky-800">Document Workflow</p>
-                <h1 className="display-font mt-2 text-4xl leading-[0.95] text-slate-950 sm:text-5xl">
-                  CamScanner-inspired, redesigned for FreeScanner.
-                </h1>
-                <p className="mt-3 max-w-2xl text-sm text-slate-700 sm:text-base">
-                  Upload receipts, notes, IDs, homework, or open your camera on mobile and desktop to create a modern scan workspace with collage export built in.
-                </p>
+                <div className="display-font text-xl font-semibold">FreeScanner</div>
+                <div className="text-sm text-slate-500">{items.length} page{items.length === 1 ? "" : "s"}</div>
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:flex">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                      className="rounded-2xl bg-sky-950 px-5 py-3 font-semibold text-white transition hover:bg-sky-900"
-                >
-                  Import Files
-                </button>
-                <button
-                  onClick={() => mobileCameraInputRef.current?.click()}
-                  className="rounded-2xl bg-white px-5 py-3 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                >
-                  Mobile Capture
-                </button>
-              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-2xl bg-sky-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-900"
+              >
+                Import
+              </button>
+              <button
+                onClick={() => void handleCameraOpen()}
+                className="rounded-2xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+              >
+                Camera
+              </button>
             </div>
           </header>
-
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_380px]">
-            <div className="glass-panel rounded-[32px] p-4 sm:p-6">
-              <div
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setIsDragging(true);
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-                className={`relative overflow-hidden rounded-[28px] border border-dashed px-5 py-10 text-center transition sm:px-8 ${
-                  isDragging ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"
-                }`}
-              >
-                <div className="absolute inset-x-10 top-0 h-32 rounded-full bg-linear-to-r from-sky-200/50 via-white to-emerald-200/50 blur-3xl" />
-                <div className="relative">
-                  <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[28px] bg-linear-to-br from-sky-500 via-cyan-400 to-emerald-400 text-4xl text-white shadow-lg shadow-cyan-200/60">
-                    +
-                  </div>
-                  <h2 className="mt-5 text-2xl font-semibold text-slate-950">Drag files here or choose a scan flow</h2>
-                  <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
-                    Inspired by the reference layout, but tailored for a cleaner FreeScanner workflow with responsive controls and camera access.
-                  </p>
-                  <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
-                    <button
-                      onClick={() => void handleCameraOpen()}
-                      className="rounded-2xl bg-emerald-500 px-5 py-3 font-semibold text-white transition hover:bg-emerald-600"
-                    >
-                      Scan with Camera
-                    </button>
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="rounded-2xl bg-white px-5 py-3 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                    >
-                      Import Images or PDF
-                    </button>
-                    <button
-                      onClick={() => mobileCameraInputRef.current?.click()}
-                      className="rounded-2xl bg-white px-5 py-3 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                    >
-                      Use Phone Camera
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                {quickActions.map((action, index) => (
-                  <div key={action.title} className="rounded-[24px] bg-white p-4 shadow-sm ring-1 ring-slate-100">
-                    {iconWrap(index === 0 ? "📷" : index === 1 ? "🖼️" : "📄", index === 0 ? "#dcfce7" : index === 1 ? "#dbeafe" : "#fef3c7")}
-                    <h3 className="mt-4 font-semibold text-slate-900">{action.title}</h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-500">{action.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="glass-panel rounded-[32px] p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Live Preview</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">
-                    {activeItem ? activeItem.name : "No page selected"}
-                  </h2>
-                </div>
-              </div>
-
-              <div className="mt-5 overflow-hidden rounded-[28px] border border-slate-200 bg-slate-100 p-3">
-                {activeItem ? (
-                  <img src={activeItem.previewUrl} alt={activeItem.name} className="aspect-4/5 w-full rounded-[22px] object-cover" />
-                ) : (
-                  <div className="flex aspect-4/5 items-center justify-center rounded-[22px] border border-slate-200 bg-white text-sm text-slate-500">
-                    Preview your latest upload or captured document here.
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {tools.map((tool) => (
-                  <span key={tool} className="rounded-full bg-white px-3 py-1.5 text-xs text-slate-600 ring-1 ring-slate-200">
-                    {tool}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </section>
 
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="glass-panel rounded-[32px] p-5">
@@ -606,7 +378,7 @@ export default function Home() {
               <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                 {items.length === 0 ? (
                   <div className="col-span-full rounded-[28px] border border-dashed border-slate-200 bg-white px-6 py-14 text-center text-slate-500">
-                    Start with the camera, mobile capture, or drag-and-drop to build your workspace.
+                    Start by importing images/PDF or opening the camera.
                   </div>
                 ) : (
                   items.map((item) => {
@@ -618,7 +390,7 @@ export default function Home() {
                           selected ? "border-emerald-300 shadow-emerald-100" : "border-white"
                         }`}
                       >
-                        <button onClick={() => setActiveId(item.id)} className="block w-full">
+                        <button onClick={() => toggleSelected(item.id)} className="block w-full" type="button">
                           <img src={item.previewUrl} alt={item.name} className="aspect-4/3 w-full object-cover" />
                         </button>
                         <div className="space-y-3 p-4">
@@ -740,6 +512,29 @@ export default function Home() {
                 </button>
               </div>
 
+              <div className="mt-4 rounded-[28px] border border-slate-200 bg-white p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Merge to PDF</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-900">A4 plain PDF from selected scans</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Each selected image becomes one A4 page. Use this for front/back documents.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                    {selectedItems.length} selected
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => void exportPdf()}
+                  disabled={selectedItems.length === 0}
+                  className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Merge Selected to PDF
+                </button>
+              </div>
+
               <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
                 <p className="font-semibold text-slate-800">Status</p>
                 <p className="mt-2 leading-6">{isProcessing ? "Processing files..." : statusMessage}</p>
@@ -813,9 +608,10 @@ async function renderCollage(items: ScanItem[], layout: CollageLayout) {
     throw new Error("Canvas not supported");
   }
 
-  const images = await Promise.all(items.slice(0, 4).map((item) => loadImage(item.previewUrl)));
+  const effectiveLayout: CollageLayout = layout === "story" && items.length > 4 ? "grid" : layout;
+  const images = await Promise.all(items.map((item) => loadImage(item.previewUrl)));
 
-  if (layout === "strip") {
+  if (effectiveLayout === "strip") {
     canvas.width = 1800;
     canvas.height = 600;
     context.fillStyle = "#f4f7fb";
@@ -831,13 +627,14 @@ async function renderCollage(items: ScanItem[], layout: CollageLayout) {
     return canvas;
   }
 
-  if (layout === "story") {
+  if (effectiveLayout === "story") {
     canvas.width = 1080;
     canvas.height = 1600;
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
 
     const heights = [620, 400, 400];
+    if (!images[0]) return canvas;
     drawCoverImage(context, images[0], 32, 32, canvas.width - 64, heights[0]);
 
     const lowerImages = images.slice(1, 3);
@@ -853,12 +650,15 @@ async function renderCollage(items: ScanItem[], layout: CollageLayout) {
   }
 
   canvas.width = 1400;
-  canvas.height = 1400;
   context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
 
   const gap = 28;
   const cell = (canvas.width - gap * 3) / 2;
+  const rows = Math.max(1, Math.ceil(images.length / 2));
+  const height = gap + rows * cell + (rows - 1) * gap;
+  canvas.height = height;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
   images.forEach((image, index) => {
     const x = gap + (index % 2) * (cell + gap);
     const y = gap + Math.floor(index / 2) * (cell + gap);
