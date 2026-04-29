@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { imagesToA4TwoUpPDF, imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
-import CropModal, { type CropAspectPreset } from "../src/components/CropModal";
+import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 
 type ScanItem = {
@@ -41,7 +41,6 @@ export default function Home() {
     !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
   const [cropOpen, setCropOpen] = useState(false);
-  const [cropAspectId, setCropAspectId] = useState("a4");
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
 
@@ -51,16 +50,6 @@ export default function Home() {
   const itemsRef = useRef<ScanItem[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
-
-  const aspectPresets = useMemo(
-    () => [
-      { id: "a4", label: "A4 Portrait", ratio: 210 / 297 },
-      { id: "45", label: "4:5", ratio: 4 / 5 },
-      { id: "34", label: "3:4", ratio: 3 / 4 },
-      { id: "11", label: "1:1", ratio: 1 },
-    ],
-    []
-  );
 
   const selectedItems = useMemo(
     () => items.filter((item) => selectedIds.includes(item.id)),
@@ -526,15 +515,15 @@ export default function Home() {
 
     // Persist cropped version to Supabase best-effort.
     if (targetItem) {
-      const updated = await updateCroppedItemInSupabase(targetItem, croppedBlob);
-      if (updated) {
+      void updateCroppedItemInSupabase(targetItem, croppedBlob).then((updated) => {
+        if (!updated) return;
         setItems((current) =>
           current.map((item) => {
             if (item.id !== targetId) return item;
             return { ...item, storagePath: updated.storagePath, expiresAt: updated.expiresAt };
           })
         );
-      }
+      });
     }
   }
 
@@ -731,34 +720,13 @@ export default function Home() {
                 </div>
 
                 <div className="mt-5 rounded-[24px] border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-slate-200">Crop ratio</div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    {aspectPresets.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setCropAspectId(p.id)}
-                        className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition ${
-                          cropAspectId === p.id
-                            ? "border-emerald-300 bg-emerald-500/20 text-white"
-                            : "border-white/10 bg-white/0 text-slate-200 hover:bg-white/5"
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-
                   <button
                     type="button"
                     onClick={startCropForSelected}
                     disabled={selectedItems.length === 0}
-                    className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Crop Selected
+                    Crop Selected (free)
                   </button>
                 </div>
 
@@ -827,8 +795,6 @@ export default function Home() {
         open={cropOpen}
         imageUrl={cropTarget?.previewUrl ?? null}
         title={cropTarget ? `Crop: ${cropTarget.name}` : "Crop selected image"}
-        aspectPresets={aspectPresets}
-        initialAspectId={cropAspectId}
         onCancel={cancelCrop}
         onApply={handleCropApply}
       />
