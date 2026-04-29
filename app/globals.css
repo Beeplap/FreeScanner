@@ -1,26 +1,79 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f7fb;
+  --foreground: #102033;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-strong: #ffffff;
+  --muted: #66758b;
+  --line: rgba(142, 163, 191, 0.28);
+  --brand: #20c5a0;
+  --brand-strong: #119f82;
+  --accent: #5b8cff;
+  --shadow: 0 24px 80px rgba(27, 44, 78, 0.12);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-sans);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), sans-serif;
+  background-image:
+    radial-gradient(circle at top left, rgba(91, 140, 255, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(32, 197, 160, 0.18), transparent 24%),
+    linear-gradient(180deg, #f8fbff 0%, #eef3f9 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(32, 197, 160, 0.22);
+}
+
+.glass-panel {
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.display-font {
+  font-family: var(--font-display), serif;
+}
+
+.soft-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 140, 255, 0.3) transparent;
+}
+
+.soft-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.soft-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(91, 140, 255, 0.28);
+  border-radius: 999px;
+}
+
+.soft-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
