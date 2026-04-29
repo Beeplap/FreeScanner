@@ -28,7 +28,7 @@ const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
 
 export default function Home() {
   const [items, setItems] = useState<ScanItem[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [pdfOrderIds, setPdfOrderIds] = useState<string[]>([]);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -36,10 +36,13 @@ export default function Home() {
   const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
   const [statusMessage, setStatusMessage] = useState("Ready.");
   const [supabaseReady, setSupabaseReady] = useState(false);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [mergePreviewUrls, setMergePreviewUrls] = useState<string[]>([]);
   const SESSION_TTL_MS = 1000 * 60 * 30; // 30 minutes
   const isSupabaseConfigured =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
+  const [twoUpFlip, setTwoUpFlip] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
@@ -51,10 +54,10 @@ export default function Home() {
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
 
-  const selectedItems = useMemo(
-    () => items.filter((item) => selectedIds.includes(item.id)),
-    [items, selectedIds]
-  );
+  const pdfOrderItems = useMemo(() => {
+    const byId = new Map(items.map((it) => [it.id, it]));
+    return pdfOrderIds.map((id) => byId.get(id)).filter(Boolean) as ScanItem[];
+  }, [items, pdfOrderIds]);
 
   const cropTargetId = cropQueue[cropCursor] ?? null;
   const cropTarget = useMemo(
@@ -338,9 +341,9 @@ export default function Home() {
     }
 
     setItems((current) => [...nextItems, ...current]);
-    setSelectedIds((current) => {
+    setPdfOrderIds((current) => {
       const ids = nextItems.map((item) => item.id);
-      return Array.from(new Set([...ids, ...current]));
+      return [...current, ...ids];
     });
   }
 
@@ -452,20 +455,46 @@ export default function Home() {
   }
 
   function toggleSelected(id: string) {
-    setSelectedIds((current) =>
+    setPdfOrderIds((current) =>
       current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id]
     );
   }
 
-  function startCropForSelected() {
-    if (selectedItems.length === 0) {
+  function movePdfOrder(id: string, delta: number) {
+    setPdfOrderIds((current) => {
+      const idx = current.indexOf(id);
+      if (idx === -1) return current;
+      const nextIdx = idx + delta;
+      if (nextIdx < 0 || nextIdx >= current.length) return current;
+      const copy = [...current];
+      const tmp = copy[idx];
+      copy[idx] = copy[nextIdx];
+      copy[nextIdx] = tmp;
+      return copy;
+    });
+  }
+
+  function swapAdjacentPairs<T>(arr: T[]) {
+    const copy = [...arr];
+    for (let i = 0; i + 1 < copy.length; i += 2) {
+      const tmp = copy[i];
+      copy[i] = copy[i + 1];
+      copy[i + 1] = tmp;
+    }
+    return copy;
+  }
+
+  function startCropForPdfOrder() {
+    if (pdfOrderItems.length === 0) {
       setStatusMessage("Select images first to crop.");
       return;
     }
-    setCropQueue(selectedItems.map((item) => item.id));
+    setCropQueue(pdfOrderItems.map((item) => item.id));
     setCropCursor(0);
     setCropOpen(true);
-    setStatusMessage(`Cropping ${selectedItems.length} selected page${selectedItems.length > 1 ? "s" : ""}...`);
+    setStatusMessage(
+      `Cropping ${pdfOrderItems.length} page${pdfOrderItems.length > 1 ? "s" : ""} for PDF...`
+    );
   }
 
   function cancelCrop() {
@@ -538,7 +567,7 @@ export default function Home() {
       return current.filter((item) => item.id !== id);
     });
 
-    setSelectedIds((current) => current.filter((itemId) => itemId !== id));
+    setPdfOrderIds((current) => current.filter((itemId) => itemId !== id));
 
     if (target) {
       void deleteItemFromSupabase(target);
@@ -546,16 +575,22 @@ export default function Home() {
   }
 
   async function exportPdf() {
-    if (selectedItems.length === 0) {
+    if (pdfOrderItems.length === 0) {
       setStatusMessage("Select pages to merge.");
       return;
     }
 
     setStatusMessage("Building your PDF...");
+    const blobsInOrder = pdfOrderItems.map((item) => item.file);
+    const blobsForExport =
+      mergeMode === "twoUp" && twoUpFlip
+        ? swapAdjacentPairs(blobsInOrder)
+        : blobsInOrder;
+
     const pdfBytes =
       mergeMode === "twoUp"
-        ? await imagesToA4TwoUpPDF(selectedItems.map((item) => item.file))
-        : await imagesToPDF(selectedItems.map((item) => item.file));
+        ? await imagesToA4TwoUpPDF(blobsForExport)
+        : await imagesToPDF(blobsForExport);
     const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
     const url = URL.createObjectURL(pdfBlob);
     const anchor = document.createElement("a");
@@ -566,21 +601,7 @@ export default function Home() {
     setStatusMessage("PDF downloaded successfully.");
   }
 
-  async function exportCollage() {
-    if (selectedItems.length === 0) {
-      setStatusMessage("Pick at least one image for the collage.");
-      return;
-    }
-
-    setStatusMessage("Rendering collage...");
-    const canvas = await renderCollage(selectedItems, collageLayout);
-    const url = canvas.toDataURL("image/jpeg", 0.94);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `freescanner-collage-${collageLayout}.jpg`;
-    anchor.click();
-    setStatusMessage("Collage exported.");
-  }
+  // Collage export removed (PDF-only).
 
   return (
     <div className="min-h-screen px-4 py-4 text-slate-900 sm:px-6 lg:px-8">
@@ -633,7 +654,7 @@ export default function Home() {
                   <h2 className="mt-2 text-2xl font-semibold text-slate-900">Select scans</h2>
                 </div>
                 <div className="rounded-full bg-white px-3 py-1.5 text-sm text-slate-600 ring-1 ring-slate-200">
-                  {selectedIds.length} selected
+                  {pdfOrderIds.length} pages in PDF
                 </div>
               </div>
 
@@ -644,7 +665,8 @@ export default function Home() {
                   </div>
                 ) : (
                   items.map((item) => {
-                    const selected = selectedIds.includes(item.id);
+                    const selected = pdfOrderIds.includes(item.id);
+                    const pdfIndex = pdfOrderIds.indexOf(item.id);
                     return (
                       <article
                         key={item.id}
@@ -663,22 +685,39 @@ export default function Home() {
                             </p>
                           </div>
                           <div className="flex gap-2">
-                            <button
-                              onClick={() => toggleSelected(item.id)}
-                              className={`flex-1 rounded-2xl px-3 py-2 text-sm font-medium transition ${
-                                selected
-                                  ? "bg-emerald-500 text-white hover:bg-emerald-600"
-                                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                              }`}
-                            >
-                              {selected ? "Selected" : "Select"}
-                            </button>
-                            <button
-                              onClick={() => removeItem(item.id)}
-                              className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
-                            >
-                              Remove
-                            </button>
+                            {selected ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => movePdfOrder(item.id, -1)}
+                                  disabled={pdfIndex === 0}
+                                  className="w-11 rounded-2xl bg-slate-100 px-2 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => movePdfOrder(item.id, 1)}
+                                  disabled={pdfIndex === pdfOrderIds.length - 1}
+                                  className="w-11 rounded-2xl bg-slate-100 px-2 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  onClick={() => removeItem(item.id)}
+                                  className="flex-1 rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
+                                >
+                                  Remove
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => toggleSelected(item.id)}
+                                className="flex-1 rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+                              >
+                                Select
+                              </button>
+                            )}
                           </div>
                         </div>
                       </article>
@@ -689,52 +728,24 @@ export default function Home() {
             </div>
 
             <div className="glass-panel rounded-[32px] p-5">
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Photo Collage</p>
-              <h2 className="mt-2 text-2xl font-semibold text-slate-900">Build collage</h2>
-
-              <div className="mt-5 grid gap-3">
-                {collageOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => setCollageLayout(option.id)}
-                    className={`rounded-[24px] border p-4 text-left transition ${
-                      collageLayout === option.id
-                        ? "border-sky-300 bg-sky-50"
-                        : "border-white bg-white hover:border-slate-200"
-                    }`}
-                  >
-                    <div className="font-semibold text-slate-900">{option.label}</div>
-                  </button>
-                ))}
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Export PDF</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">Crop + merge</h2>
+                </div>
+                <div className="rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
+                  {pdfOrderItems.length} pages
+                </div>
               </div>
 
-              <div className="mt-5 rounded-[28px] bg-linear-to-br from-sky-950 via-slate-900 to-slate-800 p-5 text-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-slate-300">Selected pages</div>
-                    <div className="mt-1 text-3xl font-semibold">{selectedItems.length}</div>
-                  </div>
-                  <div className="rounded-2xl bg-white/10 px-3 py-2 text-sm text-slate-200">
-                    Layout: {collageLayout}
-                  </div>
-                </div>
-
-                <div className="mt-5 rounded-[24px] border border-white/10 bg-white/5 p-4">
-                  <button
-                    type="button"
-                    onClick={startCropForSelected}
-                    disabled={selectedItems.length === 0}
-                    className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Crop Selected (free)
-                  </button>
-                </div>
-
+              <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4">
                 <button
-                  onClick={() => void exportCollage()}
-                  className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-white px-4 py-3 font-semibold text-slate-950 transition hover:bg-slate-100"
+                  type="button"
+                  onClick={startCropForPdfOrder}
+                  disabled={pdfOrderItems.length === 0}
+                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Export Collage
+                  Crop for PDF (A4)
                 </button>
               </div>
 
@@ -769,13 +780,13 @@ export default function Home() {
                     </div>
                   </div>
                   <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
-                    {selectedItems.length} selected
+                    {pdfOrderItems.length} selected
                   </div>
                 </div>
 
                 <button
                   onClick={() => void exportPdf()}
-                  disabled={selectedItems.length === 0}
+                  disabled={pdfOrderItems.length === 0}
                   className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Merge Selected to PDF
