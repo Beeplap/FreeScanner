@@ -304,7 +304,6 @@ export default function Home() {
         .eq("user_id", userId)
         .eq("session_id", sessionId);
     } catch {
-      // If auth/RLS fails, we still want the app to be usable.
     }
   }
 
@@ -603,6 +602,111 @@ export default function Home() {
 
   // Collage export removed (PDF-only).
 
+  async function generateMergePreview() {
+    if (pdfOrderItems.length === 0) {
+      setMergePreviewUrls([]);
+      return;
+    }
+
+    const runToken = Symbol("preview");
+    (generateMergePreview as any)._token = runToken;
+
+    setIsGeneratingPreview(true);
+    try {
+      const A4_WIDTH = 595.28;
+      const A4_HEIGHT = 841.89;
+      const W = 900;
+      const H = Math.round((W * A4_HEIGHT) / A4_WIDTH);
+      const margin = 44;
+      const gap = 34;
+
+      const orderedItems =
+        mergeMode === "twoUp" && twoUpFlip ? swapAdjacentPairs(pdfOrderItems) : pdfOrderItems;
+
+      const previews: string[] = [];
+
+      const drawContainImage = (
+        ctx: CanvasRenderingContext2D,
+        img: HTMLImageElement,
+        x: number,
+        y: number,
+        w: number,
+        h: number
+      ) => {
+        const iw = img.naturalWidth || img.width;
+        const ih = img.naturalHeight || img.height;
+        if (!iw || !ih) return;
+        const scale = Math.min(w / iw, h / ih);
+        const dw = iw * scale;
+        const dh = ih * scale;
+        const dx = x + (w - dw) / 2;
+        const dy = y + (h - dh) / 2;
+        ctx.drawImage(img, dx, dy, dw, dh);
+      };
+
+      const limitProduced =
+        mergeMode === "single" ? Math.min(orderedItems.length, 4) : Math.min(Math.ceil(orderedItems.length / 2), 4);
+
+      if (mergeMode === "single") {
+        for (let i = 0; i < limitProduced; i++) {
+          const item = orderedItems[i];
+          const img = await loadImage(item.previewUrl);
+
+          const canvas = document.createElement("canvas");
+          canvas.width = W;
+          canvas.height = H;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, W, H);
+
+          drawContainImage(ctx, img, margin, margin, W - margin * 2, H - margin * 2);
+
+          previews.push(canvas.toDataURL("image/jpeg", 0.9));
+
+          if ((generateMergePreview as any)._token !== runToken) return;
+        }
+      } else {
+        for (let pairIndex = 0; pairIndex < limitProduced; pairIndex++) {
+          const topItem = orderedItems[pairIndex * 2];
+          const bottomItem = orderedItems[pairIndex * 2 + 1];
+
+          const canvas = document.createElement("canvas");
+          canvas.width = W;
+          canvas.height = H;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) continue;
+
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, W, H);
+
+          const contentH = H - margin * 2;
+          const halfH = (contentH - gap) / 2;
+
+          if (topItem) {
+            const topImg = await loadImage(topItem.previewUrl);
+            drawContainImage(ctx, topImg, margin, margin, W - margin * 2, halfH);
+          }
+          if (bottomItem) {
+            const bottomImg = await loadImage(bottomItem.previewUrl);
+            drawContainImage(ctx, bottomImg, margin, margin + halfH + gap, W - margin * 2, halfH);
+          }
+
+          previews.push(canvas.toDataURL("image/jpeg", 0.9));
+
+          if ((generateMergePreview as any)._token !== runToken) return;
+        }
+      }
+
+      setMergePreviewUrls(previews);
+    } catch {
+      setMergePreviewUrls([]);
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  }
+
   return (
     <div className="min-h-screen px-4 py-4 text-slate-900 sm:px-6 lg:px-8">
       <input
@@ -779,6 +883,17 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
+
+                  {mergeMode === "twoUp" ? (
+                    <button
+                      type="button"
+                      onClick={() => setTwoUpFlip((v) => !v)}
+                      className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      disabled={pdfOrderItems.length < 2}
+                    >
+                      {twoUpFlip ? "Flip pairs: back on top" : "Flip pairs: front on top"}
+                    </button>
+                  ) : null}
                   <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
                     {pdfOrderItems.length} selected
                   </div>
@@ -791,6 +906,38 @@ export default function Home() {
                 >
                   Merge Selected to PDF
                 </button>
+
+                <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-800">
+                    Preview (first {mergeMode === "twoUp" ? "2-up pages" : "pages"})
+                  </p>
+                  {pdfOrderItems.length === 0 ? (
+                    <p className="mt-2 text-sm text-slate-500">Select images to preview merged A4 output.</p>
+                  ) : isGeneratingPreview ? (
+                    <p className="mt-2 text-sm text-slate-500">Rendering preview...</p>
+                  ) : mergePreviewUrls.length === 0 ? (
+                    <p className="mt-2 text-sm text-slate-500">Generate preview below.</p>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      {mergePreviewUrls.slice(0, 4).map((url, idx) => (
+                        <img
+                          key={url + idx}
+                          src={url}
+                          alt={`Preview page ${idx + 1}`}
+                          className="aspect-[3/4] w-full rounded-xl border border-slate-200 bg-white object-cover"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void generateMergePreview()}
+                    disabled={pdfOrderItems.length === 0 || isGeneratingPreview}
+                    className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Generate Preview
+                  </button>
+                </div>
               </div>
 
               <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 text-sm text-slate-600">

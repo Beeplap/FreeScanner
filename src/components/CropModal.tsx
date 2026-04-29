@@ -104,6 +104,7 @@ export default function CropModal({
   const [container, setContainer] = useState<{ w: number; h: number } | null>(null);
   const [rotationDeg, setRotationDeg] = useState(0);
   const [cropBox, setCropBox] = useState<CropBox | null>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const [isApplying, setIsApplying] = useState(false);
 
   const rotationBucket = useMemo(() => {
@@ -148,6 +149,52 @@ export default function CropModal({
       setNatural({ w: img.naturalWidth, h: img.naturalHeight });
     })().catch(() => {});
   }, [open, imageUrl]);
+
+  // Render a rotated preview to a canvas so crop coordinates match exactly.
+  useEffect(() => {
+    if (!open || !imageUrl || !natural || !render) return;
+    let cancelled = false;
+
+    (async () => {
+      const img = await loadImage(imageUrl);
+      if (cancelled) return;
+
+      const canvas = previewCanvasRef.current;
+      if (!canvas) return;
+
+      const nextW = Math.max(1, Math.round(render.renderW));
+      const nextH = Math.max(1, Math.round(render.renderH));
+      canvas.width = nextW;
+      canvas.height = nextH;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.clearRect(0, 0, nextW, nextH);
+
+      const rad = (rotationBucket * Math.PI) / 180;
+      ctx.save();
+      ctx.translate(nextW / 2, nextH / 2);
+      ctx.rotate(rad);
+
+      const drawW = natural.w * render.scale;
+      const drawH = natural.h * render.scale;
+
+      ctx.drawImage(
+        img,
+        -drawW / 2,
+        -drawH / 2,
+        drawW,
+        drawH
+      );
+
+      ctx.restore();
+    })().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, imageUrl, natural, render, rotationBucket]);
 
   // Track container size
   useEffect(() => {
@@ -348,18 +395,14 @@ export default function CropModal({
                 onPointerCancel={onPointerUp}
               >
                 {imageUrl && render ? (
-                  <img
-                    src={imageUrl}
-                    alt="To crop"
-                    draggable={false}
-                    className="absolute left-1/2 top-1/2 select-none"
+                  <canvas
+                    ref={previewCanvasRef}
+                    className="absolute"
                     style={{
+                      left: render.offsetX,
+                      top: render.offsetY,
                       width: render.renderW,
                       height: render.renderH,
-                      objectFit: "contain",
-                      transform: `translate(-50%, -50%) rotate(${rotationBucket}deg)`,
-                      transformOrigin: "center",
-                      userSelect: "none",
                       pointerEvents: "none",
                     }}
                   />
