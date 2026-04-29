@@ -53,6 +53,9 @@ export default function Home() {
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
   const dragPdfIdRef = useRef<string | null>(null);
+  const lastDragOverIdRef = useRef<string | null>(null);
+  const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
+  const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
 
   const pdfOrderItems = useMemo(() => {
     const byId = new Map(items.map((it) => [it.id, it]));
@@ -500,6 +503,46 @@ export default function Home() {
     dragPdfIdRef.current = null;
   }
 
+  function startHandleDrag(id: string, e: React.PointerEvent) {
+    const isSelected = pdfOrderIds.includes(id);
+    if (!isSelected) return;
+
+    dragPdfIdRef.current = id;
+    setDraggingPdfId(id);
+    lastDragOverIdRef.current = id;
+
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    const onMove = (ev: PointerEvent) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      const card = el?.closest?.('[data-pdf-card="true"]') as HTMLElement | null;
+      const overId = card?.getAttribute?.("data-pdf-id") ?? null;
+      if (!overId) return;
+      if (overId === dragPdfIdRef.current) return;
+      if (lastDragOverIdRef.current === overId) return;
+
+      handlePdfDragOver(overId);
+      lastDragOverIdRef.current = overId;
+      setDragOverPdfId(overId);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      dragPdfIdRef.current = null;
+      lastDragOverIdRef.current = null;
+      setDraggingPdfId(null);
+      setDragOverPdfId(null);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
   function startCropForPdfOrder() {
     if (pdfOrderItems.length === 0) {
       setStatusMessage("Select images first to crop.");
@@ -796,7 +839,7 @@ export default function Home() {
                     return (
                       <article
                         key={item.id}
-                        className={`overflow-hidden rounded-[28px] border bg-white shadow-sm transition ${
+                        className={`relative overflow-hidden rounded-[28px] border bg-white shadow-sm transition ${
                           selected
                             ? mergeMode === "twoUp"
                               ? pdfIndex % 2 === 0
@@ -804,21 +847,30 @@ export default function Home() {
                                 : "border-sky-300 shadow-sky-100"
                               : "border-emerald-300 shadow-emerald-100"
                             : "border-white"
+                        } ${draggingPdfId === item.id ? "opacity-80" : "opacity-100"} ${
+                          dragOverPdfId === item.id ? "ring-2 ring-emerald-300" : ""
                         }`}
                         style={selected && mergeMode === "twoUp" ? { boxShadow: "none" } : undefined}
-                        draggable={selected}
-                        onDragStart={(e) => {
-                          if (!selected) return;
-                          e.dataTransfer.effectAllowed = "move";
-                          handlePdfDragStart(item.id);
-                        }}
-                        onDragOver={(e) => {
-                          if (!selected) return;
-                          e.preventDefault();
-                          handlePdfDragOver(item.id);
-                        }}
-                        onDragEnd={() => handlePdfDragEnd()}
+                        data-pdf-card="true"
+                        data-pdf-id={item.id}
                       >
+                        <div className="absolute left-3 top-3 z-30">
+                          {selected ? (
+                            <button
+                              type="button"
+                              aria-label="Drag to reorder"
+                              className="grid h-10 w-10 place-items-center rounded-xl bg-slate-950 text-white shadow-sm"
+                              style={{
+                                cursor: "grab",
+                                opacity: draggingPdfId === item.id ? 0.95 : 0.9,
+                                transform: draggingPdfId === item.id ? "scale(1.03)" : undefined,
+                              }}
+                              onPointerDown={(e) => startHandleDrag(item.id, e)}
+                            >
+                              ⠿
+                            </button>
+                          ) : null}
+                        </div>
                         <button onClick={() => toggleSelected(item.id)} className="block w-full" type="button">
                           <img src={item.previewUrl} alt={item.name} className="aspect-4/3 w-full object-cover" />
                         </button>
