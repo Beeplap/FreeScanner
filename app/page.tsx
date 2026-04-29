@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
+import CropModal, { type CropAspectPreset } from "../src/components/CropModal";
 
 type ScanItem = {
   id: string;
@@ -88,6 +89,12 @@ export default function Home() {
   const selectedItems = useMemo(
     () => items.filter((item) => selectedIds.includes(item.id)),
     [items, selectedIds]
+  );
+
+  const cropTargetId = cropQueue[cropCursor] ?? null;
+  const cropTarget = useMemo(
+    () => (cropTargetId ? items.find((item) => item.id === cropTargetId) ?? null : null),
+    [cropTargetId, items]
   );
 
   useEffect(() => {
@@ -249,6 +256,56 @@ export default function Home() {
     );
   }
 
+  function startCropForSelected() {
+    if (selectedItems.length === 0) {
+      setStatusMessage("Select images first to crop.");
+      return;
+    }
+    setCropQueue(selectedItems.map((item) => item.id));
+    setCropCursor(0);
+    setCropOpen(true);
+    setStatusMessage(`Cropping ${selectedItems.length} selected page${selectedItems.length > 1 ? "s" : ""}...`);
+  }
+
+  function cancelCrop() {
+    setCropOpen(false);
+    setCropQueue([]);
+    setCropCursor(0);
+    setStatusMessage("Crop cancelled.");
+  }
+
+  function handleCropApply(croppedBlob: Blob) {
+    if (!cropTargetId) return;
+
+    const targetId = cropTargetId;
+    const queueLen = cropQueue.length;
+    const nextCursor = cropCursor + 1;
+    const newPreviewUrl = URL.createObjectURL(croppedBlob);
+
+    setItems((current) =>
+      current.map((item) => {
+        if (item.id !== targetId) return item;
+
+        // Only revoke the previous preview if it is not the original one.
+        if (item.originalPreviewUrl !== item.previewUrl) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+
+        return { ...item, file: croppedBlob, previewUrl: newPreviewUrl };
+      })
+    );
+
+    if (nextCursor >= queueLen) {
+      setCropOpen(false);
+      setCropQueue([]);
+      setCropCursor(0);
+      setStatusMessage("Cropping done.");
+    } else {
+      setCropCursor(nextCursor);
+      setStatusMessage(`Cropped ${nextCursor} of ${queueLen}.`);
+    }
+  }
+
   function removeItem(id: string) {
     setItems((current) => {
       const target = current.find((item) => item.id === id);
@@ -270,10 +327,11 @@ export default function Home() {
   }
 
   async function exportPdf() {
-    if (items.length === 0) return;
+    const exportList = selectedItems.length > 0 ? selectedItems : items;
+    if (exportList.length === 0) return;
 
     setStatusMessage("Building your PDF...");
-    const pdfBytes = await imagesToPDF(items.map((item) => item.file));
+    const pdfBytes = await imagesToPDF(exportList.map((item) => item.file));
     const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
     const url = URL.createObjectURL(pdfBlob);
     const anchor = document.createElement("a");
@@ -511,13 +569,6 @@ export default function Home() {
                     {activeItem ? activeItem.name : "No page selected"}
                   </h2>
                 </div>
-                <button
-                  onClick={exportPdf}
-                  disabled={items.length === 0}
-                  className="rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Export PDF
-                </button>
               </div>
 
               <div className="mt-5 overflow-hidden rounded-[28px] border border-slate-200 bg-slate-100 p-3">
@@ -637,6 +688,50 @@ export default function Home() {
                     Layout: {collageLayout}
                   </div>
                 </div>
+
+                <div className="mt-5 rounded-[24px] border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-slate-200">Crop ratio</div>
+                    <button
+                      type="button"
+                      onClick={() => setCropAspectId("a4")}
+                      className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-white/15"
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {aspectPresets.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setCropAspectId(p.id)}
+                        className={`rounded-2xl border px-3 py-2 text-xs font-semibold transition ${
+                          cropAspectId === p.id
+                            ? "border-emerald-300 bg-emerald-500/20 text-white"
+                            : "border-white/10 bg-white/0 text-slate-200 hover:bg-white/5"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={startCropForSelected}
+                    disabled={selectedItems.length === 0}
+                    className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Crop Selected
+                  </button>
+
+                  <p className="mt-2 text-xs leading-5 text-slate-300">
+                    Cropping updates the selected pages used for collage and PDF merge.
+                  </p>
+                </div>
+
                 <button
                   onClick={() => void exportCollage()}
                   className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-white px-4 py-3 font-semibold text-slate-950 transition hover:bg-slate-100"
@@ -653,6 +748,16 @@ export default function Home() {
           </section>
         </main>
       </div>
+
+      <CropModal
+        open={cropOpen}
+        imageUrl={cropTarget?.previewUrl ?? null}
+        title={cropTarget ? `Crop: ${cropTarget.name}` : "Crop selected image"}
+        aspectPresets={aspectPresets}
+        initialAspectId={cropAspectId}
+        onCancel={cancelCrop}
+        onApply={handleCropApply}
+      />
 
       {isCameraOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">

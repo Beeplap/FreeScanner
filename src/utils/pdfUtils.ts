@@ -25,7 +25,6 @@ export async function imagesToPDF(images: Blob[]): Promise<Uint8Array> {
     const x = (A4_WIDTH - w) / 2;
     const y = (A4_HEIGHT - h) / 2;
     page.drawImage(embedded, { x, y, width: w, height: h });
-    page.drawRectangle({ x, y, width: w, height: h, borderColor: rgb(0.8,0.8,0.8), borderWidth: 0.5 });
   }
   return pdfDoc.save();
 }
