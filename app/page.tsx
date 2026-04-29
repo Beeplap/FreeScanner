@@ -8,7 +8,9 @@ type ScanItem = {
   name: string;
   kind: "upload" | "camera" | "pdf-page";
   file: Blob;
+  originalFile: Blob;
   previewUrl: string;
+  originalPreviewUrl: string;
   createdAt: number;
 };
 
@@ -57,12 +59,26 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
   const [statusMessage, setStatusMessage] = useState("Ready to scan, upload, and organize.");
+  const [cropOpen, setCropOpen] = useState(false);
+  const [cropAspectId, setCropAspectId] = useState("a4");
+  const [cropQueue, setCropQueue] = useState<string[]>([]);
+  const [cropCursor, setCropCursor] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mobileCameraInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
+
+  const aspectPresets = useMemo(
+    () => [
+      { id: "a4", label: "A4 Portrait", ratio: 210 / 297 },
+      { id: "45", label: "4:5", ratio: 4 / 5 },
+      { id: "34", label: "3:4", ratio: 3 / 4 },
+      { id: "11", label: "1:1", ratio: 1 },
+    ],
+    []
+  );
 
   const activeItem = useMemo(
     () => items.find((item) => item.id === activeId) ?? null,
@@ -80,7 +96,12 @@ export default function Home() {
 
   useEffect(() => {
     return () => {
-      itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+      itemsRef.current.forEach((item) => {
+        URL.revokeObjectURL(item.previewUrl);
+        if (item.originalPreviewUrl !== item.previewUrl) {
+          URL.revokeObjectURL(item.originalPreviewUrl);
+        }
+      });
       stopCamera();
     };
   }, []);
@@ -101,7 +122,9 @@ export default function Home() {
       name,
       kind,
       file: blob,
+      originalFile: blob,
       previewUrl: URL.createObjectURL(blob),
+      originalPreviewUrl: URL.createObjectURL(blob),
       createdAt: Date.now(),
     }));
 
@@ -231,6 +254,9 @@ export default function Home() {
       const target = current.find((item) => item.id === id);
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
+        if (target.originalPreviewUrl !== target.previewUrl) {
+          URL.revokeObjectURL(target.originalPreviewUrl);
+        }
       }
       return current.filter((item) => item.id !== id);
     });
@@ -334,7 +360,7 @@ export default function Home() {
                 className={`rounded-2xl border px-4 py-3 ${
                   index === 0
                     ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                    : "border-transparent bg-white/60 text-slate-700"
+                    : "border-slate-200/70 bg-white text-slate-700"
                 }`}
               >
                 <div className="font-semibold">{label}</div>
@@ -343,8 +369,8 @@ export default function Home() {
             ))}
           </nav>
 
-          <div className="rounded-[24px] bg-slate-950 p-5 text-white shadow-2xl shadow-slate-900/20">
-            <p className="text-xs uppercase tracking-[0.3em] text-emerald-300">Smart Capture</p>
+          <div className="rounded-[24px] border border-sky-100 bg-linear-to-br from-sky-950 via-slate-900 to-teal-950 p-5 text-white shadow-xl shadow-sky-900/10">
+            <p className="text-xs uppercase tracking-[0.3em] text-emerald-200">Smart Capture</p>
             <h2 className="mt-3 display-font text-3xl leading-tight">
               Built for quick document cleanup on phones and laptops.
             </h2>
@@ -359,7 +385,7 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="rounded-[24px] bg-white/80 p-4">
+          <div className="rounded-[24px] border border-slate-200/80 bg-white p-4">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold">Scan Tray</h3>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">{storageLabel}</span>
@@ -396,18 +422,18 @@ export default function Home() {
           <header className="glass-panel rounded-[28px] px-5 py-4 sm:px-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.25em] text-sky-700">Document Workflow</p>
-                <h1 className="display-font mt-2 text-4xl leading-none text-slate-900 sm:text-5xl">
+                <p className="text-xs uppercase tracking-[0.25em] text-sky-800">Document Workflow</p>
+                <h1 className="display-font mt-2 text-4xl leading-[0.95] text-slate-950 sm:text-5xl">
                   CamScanner-inspired, redesigned for FreeScanner.
                 </h1>
-                <p className="mt-3 max-w-2xl text-sm text-slate-600 sm:text-base">
+                <p className="mt-3 max-w-2xl text-sm text-slate-700 sm:text-base">
                   Upload receipts, notes, IDs, homework, or open your camera on mobile and desktop to create a modern scan workspace with collage export built in.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:flex">
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="rounded-2xl bg-slate-950 px-5 py-3 font-semibold text-white transition hover:bg-slate-800"
+                      className="rounded-2xl bg-sky-950 px-5 py-3 font-semibold text-white transition hover:bg-sky-900"
                 >
                   Import Files
                 </button>
@@ -431,7 +457,7 @@ export default function Home() {
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={handleDrop}
                 className={`relative overflow-hidden rounded-[28px] border border-dashed px-5 py-10 text-center transition sm:px-8 ${
-                  isDragging ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white/70"
+                  isDragging ? "border-emerald-400 bg-emerald-50" : "border-slate-200 bg-white"
                 }`}
               >
                 <div className="absolute inset-x-10 top-0 h-32 rounded-full bg-linear-to-r from-sky-200/50 via-white to-emerald-200/50 blur-3xl" />
@@ -439,8 +465,8 @@ export default function Home() {
                   <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[28px] bg-linear-to-br from-sky-500 via-cyan-400 to-emerald-400 text-4xl text-white shadow-lg shadow-cyan-200/60">
                     +
                   </div>
-                  <h2 className="mt-5 text-2xl font-semibold text-slate-900">Drag files here or choose a scan flow</h2>
-                  <p className="mx-auto mt-2 max-w-xl text-sm text-slate-500">
+                  <h2 className="mt-5 text-2xl font-semibold text-slate-950">Drag files here or choose a scan flow</h2>
+                  <p className="mx-auto mt-2 max-w-xl text-sm text-slate-600">
                     Inspired by the reference layout, but tailored for a cleaner FreeScanner workflow with responsive controls and camera access.
                   </p>
                   <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
@@ -468,7 +494,7 @@ export default function Home() {
 
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 {quickActions.map((action, index) => (
-                  <div key={action.title} className="rounded-[24px] bg-white/80 p-4 shadow-sm ring-1 ring-slate-100">
+                  <div key={action.title} className="rounded-[24px] bg-white p-4 shadow-sm ring-1 ring-slate-100">
                     {iconWrap(index === 0 ? "📷" : index === 1 ? "🖼️" : "📄", index === 0 ? "#dcfce7" : index === 1 ? "#dbeafe" : "#fef3c7")}
                     <h3 className="mt-4 font-semibold text-slate-900">{action.title}</h3>
                     <p className="mt-2 text-sm leading-6 text-slate-500">{action.detail}</p>
@@ -494,11 +520,11 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="mt-5 overflow-hidden rounded-[28px] bg-slate-950/95 p-3">
+              <div className="mt-5 overflow-hidden rounded-[28px] border border-slate-200 bg-slate-100 p-3">
                 {activeItem ? (
                   <img src={activeItem.previewUrl} alt={activeItem.name} className="aspect-4/5 w-full rounded-[22px] object-cover" />
                 ) : (
-                  <div className="flex aspect-4/5 items-center justify-center rounded-[22px] border border-white/10 text-sm text-slate-300">
+                  <div className="flex aspect-4/5 items-center justify-center rounded-[22px] border border-slate-200 bg-white text-sm text-slate-500">
                     Preview your latest upload or captured document here.
                   </div>
                 )}
@@ -528,7 +554,7 @@ export default function Home() {
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                 {items.length === 0 ? (
-                  <div className="col-span-full rounded-[28px] border border-dashed border-slate-200 bg-white/70 px-6 py-14 text-center text-slate-500">
+                  <div className="col-span-full rounded-[28px] border border-dashed border-slate-200 bg-white px-6 py-14 text-center text-slate-500">
                     Start with the camera, mobile capture, or drag-and-drop to build your workspace.
                   </div>
                 ) : (
@@ -601,7 +627,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <div className="mt-5 rounded-[28px] bg-slate-950 p-5 text-white">
+              <div className="mt-5 rounded-[28px] bg-linear-to-br from-sky-950 via-slate-900 to-slate-800 p-5 text-white">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm text-slate-300">Selected pages</div>
@@ -619,7 +645,7 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="mt-4 rounded-[24px] bg-white/80 p-4 text-sm text-slate-500">
+              <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
                 <p className="font-semibold text-slate-800">Status</p>
                 <p className="mt-2 leading-6">{isProcessing ? "Processing files..." : statusMessage}</p>
               </div>

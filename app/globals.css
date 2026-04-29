@@ -1,16 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f7fb;
-  --foreground: #102033;
-  --surface: rgba(255, 255, 255, 0.82);
+  color-scheme: light;
+  --background: #eef4fb;
+  --foreground: #122033;
+  --surface: rgba(255, 255, 255, 0.96);
   --surface-strong: #ffffff;
-  --muted: #66758b;
-  --line: rgba(142, 163, 191, 0.28);
+  --muted: #526277;
+  --line: rgba(120, 145, 177, 0.22);
   --brand: #20c5a0;
   --brand-strong: #119f82;
   --accent: #5b8cff;
-  --shadow: 0 24px 80px rgba(27, 44, 78, 0.12);
+  --shadow: 0 22px 60px rgba(27, 44, 78, 0.08);
 }
 
 @theme inline {
@@ -32,9 +33,9 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), sans-serif;
   background-image:
-    radial-gradient(circle at top left, rgba(91, 140, 255, 0.16), transparent 28%),
-    radial-gradient(circle at top right, rgba(32, 197, 160, 0.18), transparent 24%),
-    linear-gradient(180deg, #f8fbff 0%, #eef3f9 100%);
+    radial-gradient(circle at top left, rgba(91, 140, 255, 0.12), transparent 30%),
+    radial-gradient(circle at top right, rgba(32, 197, 160, 0.12), transparent 26%),
+    linear-gradient(180deg, #f8fbff 0%, #edf3fa 100%);
 }
 
 button,
