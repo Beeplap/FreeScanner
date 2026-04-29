@@ -42,7 +42,6 @@ export default function Home() {
   const isSupabaseConfigured =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
-  const [twoUpFlip, setTwoUpFlip] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
@@ -53,11 +52,14 @@ export default function Home() {
   const itemsRef = useRef<ScanItem[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
+  const dragPdfIdRef = useRef<string | null>(null);
 
   const pdfOrderItems = useMemo(() => {
     const byId = new Map(items.map((it) => [it.id, it]));
     return pdfOrderIds.map((id) => byId.get(id)).filter(Boolean) as ScanItem[];
   }, [items, pdfOrderIds]);
+
+  const previewOrderedItems = pdfOrderItems;
 
   const cropTargetId = cropQueue[cropCursor] ?? null;
   const cropTarget = useMemo(
@@ -473,14 +475,29 @@ export default function Home() {
     });
   }
 
-  function swapAdjacentPairs<T>(arr: T[]) {
-    const copy = [...arr];
-    for (let i = 0; i + 1 < copy.length; i += 2) {
-      const tmp = copy[i];
-      copy[i] = copy[i + 1];
-      copy[i + 1] = tmp;
-    }
-    return copy;
+  function handlePdfDragStart(id: string) {
+    dragPdfIdRef.current = id;
+  }
+
+  function handlePdfDragOver(overId: string) {
+    const draggedId = dragPdfIdRef.current;
+    if (!draggedId || draggedId === overId) return;
+
+    setPdfOrderIds((current) => {
+      const from = current.indexOf(draggedId);
+      const to = current.indexOf(overId);
+      if (from === -1 || to === -1 || from === to) return current;
+      const next = [...current];
+      next.splice(from, 1);
+      next.splice(to, 0, draggedId);
+      return next;
+    });
+
+    dragPdfIdRef.current = overId;
+  }
+
+  function handlePdfDragEnd() {
+    dragPdfIdRef.current = null;
   }
 
   function startCropForPdfOrder() {
@@ -494,6 +511,13 @@ export default function Home() {
     setStatusMessage(
       `Cropping ${pdfOrderItems.length} page${pdfOrderItems.length > 1 ? "s" : ""} for PDF...`
     );
+  }
+
+  function startCropForOne(itemId: string) {
+    setCropQueue([itemId]);
+    setCropCursor(0);
+    setCropOpen(true);
+    setStatusMessage("Editing selected image...");
   }
 
   function cancelCrop() {
@@ -581,10 +605,7 @@ export default function Home() {
 
     setStatusMessage("Building your PDF...");
     const blobsInOrder = pdfOrderItems.map((item) => item.file);
-    const blobsForExport =
-      mergeMode === "twoUp" && twoUpFlip
-        ? swapAdjacentPairs(blobsInOrder)
-        : blobsInOrder;
+    const blobsForExport = blobsInOrder;
 
     const pdfBytes =
       mergeMode === "twoUp"
@@ -620,8 +641,7 @@ export default function Home() {
       const margin = 44;
       const gap = 34;
 
-      const orderedItems =
-        mergeMode === "twoUp" && twoUpFlip ? swapAdjacentPairs(pdfOrderItems) : pdfOrderItems;
+      const orderedItems = pdfOrderItems;
 
       const previews: string[] = [];
 
@@ -762,7 +782,9 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              <div
+                className={`mt-5 grid gap-4 ${mergeMode === "twoUp" ? "grid-cols-2" : "grid-cols-1"} sm:grid-cols-2 2xl:grid-cols-3`}
+              >
                 {items.length === 0 ? (
                   <div className="col-span-full rounded-[28px] border border-dashed border-slate-200 bg-white px-6 py-14 text-center text-slate-500">
                     Start by importing images/PDF or opening the camera.
@@ -775,8 +797,27 @@ export default function Home() {
                       <article
                         key={item.id}
                         className={`overflow-hidden rounded-[28px] border bg-white shadow-sm transition ${
-                          selected ? "border-emerald-300 shadow-emerald-100" : "border-white"
+                          selected
+                            ? mergeMode === "twoUp"
+                              ? pdfIndex % 2 === 0
+                                ? "border-emerald-300 shadow-emerald-100"
+                                : "border-sky-300 shadow-sky-100"
+                              : "border-emerald-300 shadow-emerald-100"
+                            : "border-white"
                         }`}
+                        style={selected && mergeMode === "twoUp" ? { boxShadow: "none" } : undefined}
+                        draggable={selected}
+                        onDragStart={(e) => {
+                          if (!selected) return;
+                          e.dataTransfer.effectAllowed = "move";
+                          handlePdfDragStart(item.id);
+                        }}
+                        onDragOver={(e) => {
+                          if (!selected) return;
+                          e.preventDefault();
+                          handlePdfDragOver(item.id);
+                        }}
+                        onDragEnd={() => handlePdfDragEnd()}
                       >
                         <button onClick={() => toggleSelected(item.id)} className="block w-full" type="button">
                           <img src={item.previewUrl} alt={item.name} className="aspect-4/3 w-full object-cover" />
@@ -784,6 +825,19 @@ export default function Home() {
                         <div className="space-y-3 p-4">
                           <div>
                             <h3 className="truncate font-semibold text-slate-900">{item.name}</h3>
+                            {selected && mergeMode === "twoUp" ? (
+                              <div className="mt-2 flex items-center gap-2">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                                    pdfIndex % 2 === 0
+                                      ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
+                                      : "border border-sky-200 bg-sky-50 text-sky-800"
+                                  }`}
+                                >
+                                  {pdfIndex % 2 === 0 ? "Front" : "Back"}
+                                </span>
+                              </div>
+                            ) : null}
                             <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">
                               {item.kind === "camera" ? "Camera Scan" : item.kind === "pdf-page" ? "PDF Page" : "Imported Image"}
                             </p>
@@ -793,25 +847,24 @@ export default function Home() {
                               <>
                                 <button
                                   type="button"
-                                  onClick={() => movePdfOrder(item.id, -1)}
-                                  disabled={pdfIndex === 0}
-                                  className="w-11 rounded-2xl bg-slate-100 px-2 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => startCropForOne(item.id)}
+                                  className="flex-1 rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100"
                                 >
-                                  ↑
+                                  Edit
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => movePdfOrder(item.id, 1)}
-                                  disabled={pdfIndex === pdfOrderIds.length - 1}
-                                  className="w-11 rounded-2xl bg-slate-100 px-2 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                  onClick={() => toggleSelected(item.id)}
+                                  className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
                                 >
-                                  ↓
+                                  Unselect
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() => removeItem(item.id)}
-                                  className="flex-1 rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
+                                  className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
                                 >
-                                  Remove
+                                  Delete
                                 </button>
                               </>
                             ) : (
@@ -840,17 +893,6 @@ export default function Home() {
                 <div className="rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
                   {pdfOrderItems.length} pages
                 </div>
-              </div>
-
-              <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4">
-                <button
-                  type="button"
-                  onClick={startCropForPdfOrder}
-                  disabled={pdfOrderItems.length === 0}
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Crop for PDF (A4)
-                </button>
               </div>
 
               <div className="mt-4 rounded-[28px] border border-slate-200 bg-white p-5">
@@ -884,16 +926,7 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {mergeMode === "twoUp" ? (
-                    <button
-                      type="button"
-                      onClick={() => setTwoUpFlip((v) => !v)}
-                      className="mt-3 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                      disabled={pdfOrderItems.length < 2}
-                    >
-                      {twoUpFlip ? "Flip pairs: back on top" : "Flip pairs: front on top"}
-                    </button>
-                  ) : null}
+              {/* flip removed: front/back order is decided by drag order */}
                   <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
                     {pdfOrderItems.length} selected
                   </div>
@@ -915,20 +948,84 @@ export default function Home() {
                     <p className="mt-2 text-sm text-slate-500">Select images to preview merged A4 output.</p>
                   ) : isGeneratingPreview ? (
                     <p className="mt-2 text-sm text-slate-500">Rendering preview...</p>
-                  ) : mergePreviewUrls.length === 0 ? (
-                    <p className="mt-2 text-sm text-slate-500">Generate preview below.</p>
-                  ) : (
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      {mergePreviewUrls.slice(0, 4).map((url, idx) => (
-                        <img
-                          key={url + idx}
-                          src={url}
-                          alt={`Preview page ${idx + 1}`}
-                          className="aspect-[3/4] w-full rounded-xl border border-slate-200 bg-white object-cover"
-                        />
-                      ))}
-                    </div>
-                  )}
+                ) : (
+                  <div className="mt-3 grid gap-3">
+                    {Array.from({
+                      length:
+                        mergeMode === "twoUp"
+                          ? Math.min(Math.ceil(pdfOrderItems.length / 2), 3)
+                          : Math.min(pdfOrderItems.length, 3),
+                    }).map((_, pageIdx) => {
+                      const pageNumber = pageIdx + 1;
+                      const mergedUrl = mergePreviewUrls[pageIdx] ?? null;
+
+                      const topItem =
+                        mergeMode === "twoUp" ? previewOrderedItems[pageIdx * 2] : previewOrderedItems[pageIdx];
+                      const bottomItem =
+                        mergeMode === "twoUp" ? previewOrderedItems[pageIdx * 2 + 1] : null;
+
+                      return (
+                        <div
+                          key={pageNumber}
+                          className="relative overflow-hidden rounded-xl border border-slate-200 bg-white p-2"
+                        >
+                          <div className="absolute left-2 top-2 z-10 rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white">
+                            {pageNumber}
+                          </div>
+
+                          <div className="sm:hidden">
+                      {mergeMode === "twoUp" ? (
+                              <div className="flex gap-2">
+                                <div className="flex-1">
+                            {topItem ? (
+                                    <img
+                                      src={topItem.previewUrl}
+                                      alt={`Front ${pageNumber}`}
+                                      className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
+                                    />
+                                  ) : (
+                                    <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
+                                  )}
+                                </div>
+                                <div className="flex-1">
+                                  {bottomItem ? (
+                                    <img
+                                      src={bottomItem.previewUrl}
+                                      alt={`Back ${pageNumber}`}
+                                      className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
+                                    />
+                                  ) : (
+                                    <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
+                                  )}
+                                </div>
+                              </div>
+                            ) : topItem ? (
+                              <img
+                                src={topItem.previewUrl}
+                                alt={`Page ${pageNumber}`}
+                                className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
+                              />
+                            ) : (
+                              <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
+                            )}
+                          </div>
+
+                          <div className="hidden sm:block">
+                            {mergedUrl ? (
+                              <img
+                                src={mergedUrl}
+                                alt={`Merged preview page ${pageNumber}`}
+                                className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
+                              />
+                            ) : (
+                              <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                   <button
                     type="button"
                     onClick={() => void generateMergePreview()}
