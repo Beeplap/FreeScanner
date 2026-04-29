@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
+import { imagesToA4TwoUpPDF, imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal, { type CropAspectPreset } from "../src/components/CropModal";
 
 type ScanItem = {
@@ -32,6 +32,7 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
   const [statusMessage, setStatusMessage] = useState("Ready.");
+  const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
   const [cropOpen, setCropOpen] = useState(false);
   const [cropAspectId, setCropAspectId] = useState("a4");
   const [cropQueue, setCropQueue] = useState<string[]>([]);
@@ -293,12 +294,15 @@ export default function Home() {
     }
 
     setStatusMessage("Building your PDF...");
-    const pdfBytes = await imagesToPDF(selectedItems.map((item) => item.file));
+    const pdfBytes =
+      mergeMode === "twoUp"
+        ? await imagesToA4TwoUpPDF(selectedItems.map((item) => item.file))
+        : await imagesToPDF(selectedItems.map((item) => item.file));
     const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
     const url = URL.createObjectURL(pdfBlob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "freescanner-export.pdf";
+    anchor.download = mergeMode === "twoUp" ? "freescanner-2up.pdf" : "freescanner-export.pdf";
     anchor.click();
     URL.revokeObjectURL(url);
     setStatusMessage("PDF downloaded successfully.");
@@ -368,7 +372,7 @@ export default function Home() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Your Pages</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">Select scans for preview, export, or collage</h2>
+                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">Select scans</h2>
                 </div>
                 <div className="rounded-full bg-white px-3 py-1.5 text-sm text-slate-600 ring-1 ring-slate-200">
                   {selectedIds.length} selected
@@ -428,10 +432,7 @@ export default function Home() {
 
             <div className="glass-panel rounded-[32px] p-5">
               <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Photo Collage</p>
-              <h2 className="mt-2 text-2xl font-semibold text-slate-900">Turn selected scans into one shareable image</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">
-                Choose a layout, pick the pages you want, and export a ready-to-share collage for WhatsApp, email, or quick review.
-              </p>
+              <h2 className="mt-2 text-2xl font-semibold text-slate-900">Build collage</h2>
 
               <div className="mt-5 grid gap-3">
                 {collageOptions.map((option) => (
@@ -445,7 +446,6 @@ export default function Home() {
                     }`}
                   >
                     <div className="font-semibold text-slate-900">{option.label}</div>
-                    <div className="mt-1 text-sm text-slate-500">{option.detail}</div>
                   </button>
                 ))}
               </div>
@@ -464,13 +464,6 @@ export default function Home() {
                 <div className="mt-5 rounded-[24px] border border-white/10 bg-white/5 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-slate-200">Crop ratio</div>
-                    <button
-                      type="button"
-                      onClick={() => setCropAspectId("a4")}
-                      className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-white/15"
-                    >
-                      Reset
-                    </button>
                   </div>
 
                   <div className="mt-3 grid grid-cols-2 gap-2">
@@ -498,10 +491,6 @@ export default function Home() {
                   >
                     Crop Selected
                   </button>
-
-                  <p className="mt-2 text-xs leading-5 text-slate-300">
-                    Cropping updates the selected pages used for collage and PDF merge.
-                  </p>
                 </div>
 
                 <button
@@ -516,10 +505,31 @@ export default function Home() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Merge to PDF</p>
-                    <h3 className="mt-2 text-xl font-semibold text-slate-900">A4 plain PDF from selected scans</h3>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      Each selected image becomes one A4 page. Use this for front/back documents.
-                    </p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-900">A4 PDF from selected scans</h3>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <button
+                        type="button"
+                        onClick={() => setMergeMode("single")}
+                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                          mergeMode === "single"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        1 per A4 page
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMergeMode("twoUp")}
+                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                          mergeMode === "twoUp"
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        2-up (front/back)
+                      </button>
+                    </div>
                   </div>
                   <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
                     {selectedItems.length} selected
@@ -536,8 +546,8 @@ export default function Home() {
               </div>
 
               <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                <p className="font-semibold text-slate-800">Status</p>
-                <p className="mt-2 leading-6">{isProcessing ? "Processing files..." : statusMessage}</p>
+                <p className="font-semibold text-slate-800">{isProcessing ? "Working..." : "Status"}</p>
+                <p className="mt-1 leading-6">{isProcessing ? "Processing files..." : statusMessage}</p>
               </div>
             </div>
           </section>
