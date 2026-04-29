@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { imagesToA4TwoUpPDF, imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal, { type CropAspectPreset } from "../src/components/CropModal";
+import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 
 type ScanItem = {
   id: string;
@@ -13,6 +14,8 @@ type ScanItem = {
   previewUrl: string;
   originalPreviewUrl: string;
   createdAt: number;
+  storagePath?: string | null;
+  expiresAt?: number | null;
 };
 
 type CollageLayout = "grid" | "story" | "strip";
@@ -32,6 +35,10 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
   const [statusMessage, setStatusMessage] = useState("Ready.");
+  const [supabaseReady, setSupabaseReady] = useState(false);
+  const SESSION_TTL_MS = 1000 * 60 * 30; // 30 minutes
+  const isSupabaseConfigured =
+    !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
   const [cropOpen, setCropOpen] = useState(false);
   const [cropAspectId, setCropAspectId] = useState("a4");
@@ -42,6 +49,8 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
+  const sessionIdRef = useRef<string | null>(null);
+  const supabaseUserIdRef = useRef<string | null>(null);
 
   const aspectPresets = useMemo(
     () => [
@@ -69,6 +78,47 @@ export default function Home() {
   }, [items]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const existing = sessionStorage.getItem("freescanner_session_id");
+      if (existing) {
+        sessionIdRef.current = existing;
+      } else {
+        const id = crypto.randomUUID();
+        sessionStorage.setItem("freescanner_session_id", id);
+        sessionIdRef.current = id;
+      }
+    } catch {
+      // sessionStorage may be blocked in some environments; fall back to a ref-only id.
+      sessionIdRef.current = crypto.randomUUID();
+    }
+
+    (async () => {
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+
+        if (userData.user) {
+          supabaseUserIdRef.current = userData.user.id;
+          setSupabaseReady(true);
+          return;
+        }
+
+        const { data: signInData, error: signInError } = await supabase.auth.signInAnonymously();
+        if (signInError) throw signInError;
+
+        if (signInData.user) {
+          supabaseUserIdRef.current = signInData.user.id;
+          setSupabaseReady(true);
+        }
+      } catch {
+        // If Supabase auth is blocked, we still keep the app fully functional in-memory.
+        setSupabaseReady(false);
+      }
+    })();
+  }, [isSupabaseConfigured]);
+
+  useEffect(() => {
     return () => {
       itemsRef.current.forEach((item) => {
         URL.revokeObjectURL(item.previewUrl);
@@ -80,6 +130,21 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabaseReady) return;
+
+    const handler = () => {
+      void cleanupSessionBestEffort();
+    };
+
+    window.addEventListener("pagehide", handler);
+    window.addEventListener("beforeunload", handler);
+    return () => {
+      window.removeEventListener("pagehide", handler);
+      window.removeEventListener("beforeunload", handler);
+    };
+  }, [isSupabaseConfigured, supabaseReady]);
+
   function stopCamera() {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -88,10 +153,173 @@ export default function Home() {
     setCameraReady(false);
   }
 
+  function getExtFromBlobType(type: string) {
+    if (type.includes("png")) return "png";
+    if (type.includes("webp")) return "webp";
+    return "jpg";
+  }
+
+  async function uploadItemToSupabase(params: {
+    itemId: string;
+    kind: ScanItem["kind"];
+    name: string;
+    blob: Blob;
+  }) {
+    const userId = supabaseUserIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return null;
+
+    const ext = getExtFromBlobType(params.blob.type || "");
+    const storagePath = `${userId}/${sessionId}/${params.itemId}.${ext}`;
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+
+    try {
+      const contentType = params.blob.type || "image/jpeg";
+      const { error: uploadError } = await supabase
+        .storage
+        .from(SUPABASE_SCANS_BUCKET)
+        .upload(storagePath, params.blob, { contentType, upsert: false });
+      if (uploadError) throw uploadError;
+
+      const { error: insertError } = await supabase.from(SUPABASE_SCAN_PAGES_TABLE).insert({
+        id: params.itemId,
+        user_id: userId,
+        session_id: sessionId,
+        storage_path: storagePath,
+        kind: params.kind,
+        name: params.name,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(expiresAt).toISOString(),
+      } as any);
+
+      if (insertError) {
+        // Avoid orphan objects if metadata insert fails.
+        await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove([storagePath]).catch(() => {});
+        throw insertError;
+      }
+
+      return { storagePath, expiresAt };
+    } catch {
+      return null;
+    }
+  }
+
+  async function updateCroppedItemInSupabase(item: ScanItem, croppedBlob: Blob) {
+    const userId = supabaseUserIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return null;
+    if (!item.storagePath) return null;
+
+    const ext = getExtFromBlobType(croppedBlob.type || "");
+    const newStoragePath = `${userId}/${sessionId}/${item.id}.${ext}`;
+    const expiresAt = Date.now() + SESSION_TTL_MS;
+
+    try {
+      const contentType = croppedBlob.type || "image/jpeg";
+      await supabase.storage.from(SUPABASE_SCANS_BUCKET).upload(newStoragePath, croppedBlob, {
+        contentType,
+        upsert: true,
+      });
+
+      const { error: updateError } = await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .update({
+          storage_path: newStoragePath,
+          name: item.name,
+          kind: item.kind,
+          expires_at: new Date(expiresAt).toISOString(),
+        } as any)
+        .eq("id", item.id)
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+
+      // If the row doesn't exist for some reason, fall back to insert.
+      if (updateError) {
+        const { error: insertError } = await supabase.from(SUPABASE_SCAN_PAGES_TABLE).insert({
+          id: item.id,
+          user_id: userId,
+          session_id: sessionId,
+          storage_path: newStoragePath,
+          kind: item.kind,
+          name: item.name,
+          created_at: new Date().toISOString(),
+          expires_at: new Date(expiresAt).toISOString(),
+        } as any);
+
+        if (insertError) throw insertError;
+      }
+
+      if (item.storagePath !== newStoragePath) {
+        await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove([item.storagePath]);
+      }
+
+      return { storagePath: newStoragePath, expiresAt };
+    } catch {
+      return null;
+    }
+  }
+
+  async function deleteItemFromSupabase(item: ScanItem) {
+    const userId = supabaseUserIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return;
+    if (!item.storagePath) return;
+
+    const storagePath = item.storagePath;
+
+    try {
+      await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove([storagePath]);
+    } catch {
+      // best-effort
+    }
+
+    try {
+      await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .delete()
+        .eq("id", item.id)
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+    } catch {
+      // best-effort
+    }
+  }
+
+  async function cleanupSessionBestEffort() {
+    const userId = supabaseUserIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return;
+
+    try {
+      const { data: rows } = await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .select("storage_path")
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+
+      const paths =
+        rows
+          ?.map((r: any) => r.storage_path)
+          .filter((p: any) => typeof p === "string" && p.length > 0) ?? [];
+
+      if (paths.length > 0) {
+        await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove(paths);
+      }
+
+      await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .delete()
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+    } catch {
+      // If auth/RLS fails, we still want the app to be usable.
+    }
+  }
+
   async function addBlobItems(blobs: { blob: Blob; name: string; kind: ScanItem["kind"] }[]) {
     if (blobs.length === 0) return;
 
-    const nextItems = blobs.map(({ blob, name, kind }) => ({
+    const nextItems: ScanItem[] = blobs.map(({ blob, name, kind }) => ({
       id: crypto.randomUUID(),
       name,
       kind,
@@ -100,7 +328,25 @@ export default function Home() {
       previewUrl: URL.createObjectURL(blob),
       originalPreviewUrl: URL.createObjectURL(blob),
       createdAt: Date.now(),
+      storagePath: null,
+      expiresAt: null,
     }));
+
+    // Persist to Supabase (best-effort). If this fails, the app still works in-memory.
+    if (isSupabaseConfigured && supabaseReady && nextItems.length > 0) {
+      for (const item of nextItems) {
+        const uploaded = await uploadItemToSupabase({
+          itemId: item.id,
+          kind: item.kind,
+          name: item.name,
+          blob: item.file,
+        });
+        if (uploaded) {
+          item.storagePath = uploaded.storagePath;
+          item.expiresAt = uploaded.expiresAt;
+        }
+      }
+    }
 
     setItems((current) => [...nextItems, ...current]);
     setSelectedIds((current) => {
@@ -240,7 +486,7 @@ export default function Home() {
     setStatusMessage("Crop cancelled.");
   }
 
-  function handleCropApply(croppedBlob: Blob) {
+  async function handleCropApply(croppedBlob: Blob) {
     if (!cropTargetId) return;
 
     const targetId = cropTargetId;
@@ -248,16 +494,23 @@ export default function Home() {
     const nextCursor = cropCursor + 1;
     const newPreviewUrl = URL.createObjectURL(croppedBlob);
 
+    const targetItem = itemsRef.current.find((item) => item.id === targetId) ?? null;
+
     setItems((current) =>
       current.map((item) => {
         if (item.id !== targetId) return item;
 
-        // Only revoke the previous preview if it is not the original one.
-        if (item.originalPreviewUrl !== item.previewUrl) {
-          URL.revokeObjectURL(item.previewUrl);
-        }
+        // Treat the crop as the new "original" so subsequent crops revoke correctly.
+        if (item.previewUrl !== newPreviewUrl) URL.revokeObjectURL(item.previewUrl);
+        if (item.originalPreviewUrl !== newPreviewUrl) URL.revokeObjectURL(item.originalPreviewUrl);
 
-        return { ...item, file: croppedBlob, previewUrl: newPreviewUrl };
+        return {
+          ...item,
+          file: croppedBlob,
+          originalFile: croppedBlob,
+          previewUrl: newPreviewUrl,
+          originalPreviewUrl: newPreviewUrl,
+        };
       })
     );
 
@@ -270,21 +523,37 @@ export default function Home() {
       setCropCursor(nextCursor);
       setStatusMessage(`Cropped ${nextCursor} of ${queueLen}.`);
     }
+
+    // Persist cropped version to Supabase best-effort.
+    if (targetItem) {
+      const updated = await updateCroppedItemInSupabase(targetItem, croppedBlob);
+      if (updated) {
+        setItems((current) =>
+          current.map((item) => {
+            if (item.id !== targetId) return item;
+            return { ...item, storagePath: updated.storagePath, expiresAt: updated.expiresAt };
+          })
+        );
+      }
+    }
   }
 
   function removeItem(id: string) {
+    const target = itemsRef.current.find((item) => item.id === id) ?? null;
     setItems((current) => {
       const target = current.find((item) => item.id === id);
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
-        if (target.originalPreviewUrl !== target.previewUrl) {
-          URL.revokeObjectURL(target.originalPreviewUrl);
-        }
+        if (target.originalPreviewUrl !== target.previewUrl) URL.revokeObjectURL(target.originalPreviewUrl);
       }
       return current.filter((item) => item.id !== id);
     });
 
     setSelectedIds((current) => current.filter((itemId) => itemId !== id));
+
+    if (target) {
+      void deleteItemFromSupabase(target);
+    }
   }
 
   async function exportPdf() {
