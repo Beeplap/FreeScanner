@@ -28,6 +28,31 @@ function mimeLabel(type: string) {
   return type || "Unknown";
 }
 
+function estimateConvertedSize(file: File, outputFormat: OutputFormat, quality: number) {
+  const inputType = file.type.toLowerCase();
+  const inputSize = file.size;
+
+  let baseRatio = 1;
+  if (outputFormat === "image/jpeg") {
+    if (inputType.includes("png")) baseRatio = 0.52;
+    else if (inputType.includes("webp")) baseRatio = 1.18;
+    else baseRatio = 0.88;
+    return Math.max(1024, Math.round(inputSize * baseRatio * quality));
+  }
+
+  if (outputFormat === "image/webp") {
+    if (inputType.includes("png")) baseRatio = 0.45;
+    else if (inputType.includes("jpeg") || inputType.includes("jpg")) baseRatio = 0.78;
+    else baseRatio = 0.8;
+    return Math.max(1024, Math.round(inputSize * baseRatio * quality));
+  }
+
+  // PNG is lossless, so size can increase/decrease based on image complexity.
+  if (inputType.includes("png")) return inputSize;
+  if (inputType.includes("jpeg") || inputType.includes("jpg")) return Math.round(inputSize * 1.35);
+  return Math.round(inputSize * 1.15);
+}
+
 export default function ImageConverter() {
   const [file, setFile] = React.useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
@@ -36,6 +61,10 @@ export default function ImageConverter() {
   const [isConverting, setIsConverting] = React.useState(false);
   const [outputSize, setOutputSize] = React.useState<number | null>(null);
   const [status, setStatus] = React.useState("Upload an image to start conversion.");
+  const estimatedOutputSize = React.useMemo(() => {
+    if (!file) return null;
+    return estimateConvertedSize(file, outputFormat, quality);
+  }, [file, outputFormat, quality]);
 
   React.useEffect(() => {
     return () => {
@@ -97,6 +126,9 @@ export default function ImageConverter() {
               <p className="font-semibold text-slate-900">{file.name}</p>
               <p className="mt-1 text-slate-600">Original format: {mimeLabel(file.type)}</p>
               <p className="mt-1 text-slate-600">Original size: {formatBytes(file.size)}</p>
+              {estimatedOutputSize !== null ? (
+                <p className="mt-1 text-indigo-700">Estimated size before conversion: {formatBytes(estimatedOutputSize)}</p>
+              ) : null}
               {outputSize !== null ? <p className="mt-1 text-emerald-700">Output size: {formatBytes(outputSize)}</p> : null}
             </div>
           </div>
