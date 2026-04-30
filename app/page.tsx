@@ -53,7 +53,6 @@ export default function Home() {
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
   const dragPdfIdRef = useRef<string | null>(null);
-  const lastDragOverIdRef = useRef<string | null>(null);
   const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
 
@@ -63,6 +62,12 @@ export default function Home() {
   }, [items, pdfOrderIds]);
 
   const previewOrderedItems = pdfOrderItems;
+
+  const displayItems = useMemo(() => {
+    const selectedSet = new Set(pdfOrderIds);
+    const unselected = items.filter((item) => !selectedSet.has(item.id));
+    return [...pdfOrderItems, ...unselected];
+  }, [items, pdfOrderIds, pdfOrderItems]);
 
   const cropTargetId = cropQueue[cropCursor] ?? null;
   const cropTarget = useMemo(
@@ -479,7 +484,10 @@ export default function Home() {
   }
 
   function handlePdfDragStart(id: string) {
+    if (!pdfOrderIds.includes(id)) return;
     dragPdfIdRef.current = id;
+    setDraggingPdfId(id);
+    setDragOverPdfId(id);
   }
 
   function handlePdfDragOver(overId: string) {
@@ -495,52 +503,24 @@ export default function Home() {
       next.splice(to, 0, draggedId);
       return next;
     });
-
-    dragPdfIdRef.current = overId;
   }
 
   function handlePdfDragEnd() {
     dragPdfIdRef.current = null;
+    setDraggingPdfId(null);
+    setDragOverPdfId(null);
   }
 
-  function startHandleDrag(id: string, e: React.PointerEvent) {
-    const isSelected = pdfOrderIds.includes(id);
-    if (!isSelected) return;
+  function onCardDragStart(id: string, e: React.DragEvent<HTMLElement>) {
+    handlePdfDragStart(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  }
 
-    dragPdfIdRef.current = id;
-    setDraggingPdfId(id);
-    lastDragOverIdRef.current = id;
-
+  function onCardDragOver(overId: string, e: React.DragEvent<HTMLElement>) {
     e.preventDefault();
-    e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-
-    const onMove = (ev: PointerEvent) => {
-      const el = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
-      const card = el?.closest?.('[data-pdf-card="true"]') as HTMLElement | null;
-      const overId = card?.getAttribute?.("data-pdf-id") ?? null;
-      if (!overId) return;
-      if (overId === dragPdfIdRef.current) return;
-      if (lastDragOverIdRef.current === overId) return;
-
-      handlePdfDragOver(overId);
-      lastDragOverIdRef.current = overId;
-      setDragOverPdfId(overId);
-    };
-
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      dragPdfIdRef.current = null;
-      lastDragOverIdRef.current = null;
-      setDraggingPdfId(null);
-      setDragOverPdfId(null);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    setDragOverPdfId(overId);
+    handlePdfDragOver(overId);
   }
 
   function startCropForPdfOrder() {
@@ -664,7 +644,6 @@ export default function Home() {
     setStatusMessage("PDF downloaded successfully.");
   }
 
-  // Collage export removed (PDF-only).
 
   async function generateMergePreview() {
     if (pdfOrderItems.length === 0) {
@@ -833,7 +812,7 @@ export default function Home() {
                     Start by importing images/PDF or opening the camera.
                   </div>
                 ) : (
-                  items.map((item) => {
+                  displayItems.map((item) => {
                     const selected = pdfOrderIds.includes(item.id);
                     const pdfIndex = pdfOrderIds.indexOf(item.id);
                     return (
@@ -853,19 +832,24 @@ export default function Home() {
                         style={selected && mergeMode === "twoUp" ? { boxShadow: "none" } : undefined}
                         data-pdf-card="true"
                         data-pdf-id={item.id}
+                        data-selected={selected ? "true" : "false"}
+                        draggable={selected}
+                        onDragStart={(e) => onCardDragStart(item.id, e)}
+                        onDragOver={(e) => onCardDragOver(item.id, e)}
+                        onDragEnd={handlePdfDragEnd}
                       >
                         <div className="absolute left-3 top-3 z-30">
                           {selected ? (
                             <button
                               type="button"
                               aria-label="Drag to reorder"
-                              className="grid h-10 w-10 place-items-center rounded-xl bg-slate-950 text-white shadow-sm"
+                              className="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-slate-950/90 text-white shadow-lg"
                               style={{
                                 cursor: "grab",
                                 opacity: draggingPdfId === item.id ? 0.95 : 0.9,
                                 transform: draggingPdfId === item.id ? "scale(1.03)" : undefined,
+                                touchAction: "none",
                               }}
-                              onPointerDown={(e) => startHandleDrag(item.id, e)}
                             >
                               ⠿
                             </button>
