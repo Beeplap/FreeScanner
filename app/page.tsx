@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPdfFirstPagePreview, getPdfPageCount, imagesToFullPageA4PDF, mergePdfFiles, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
+import ImageConverter from "../src/components/ImageConverter";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 import CameraModal from "../src/components/scanner/CameraModal";
 import CompressorPanel from "../src/components/scanner/CompressorPanel";
@@ -13,7 +14,7 @@ import ScanGrid from "../src/components/scanner/ScanGrid";
 import { A4_RATIO, defaultPageEdit } from "../src/components/scanner/types";
 import type { EditorBox, EditorFrame, ImageSize, MergeMode, PageEdit, PageFilter, PdfMergeItem, ScanItem, TransformHandle } from "../src/components/scanner/types";
 
-type WorkspaceMode = "scan" | "pdf" | "compress";
+type WorkspaceMode = "scan" | "pdf" | "compress" | "convert";
 
 export default function Home() {
   const [items, setItems] = useState<ScanItem[]>([]);
@@ -64,6 +65,7 @@ export default function Home() {
   } | null>(null);
   const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isClient = typeof window !== "undefined";
 
   const pdfOrderItems = useMemo(() => {
@@ -1071,10 +1073,22 @@ export default function Home() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="inline-grid grid-cols-3 rounded-lg border border-slate-200 bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen((current) => !current)}
+                  className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 sm:hidden"
+                  aria-label="Toggle workspace navigation"
+                >
+                  ☰ Menu
+                </button>
+
+                <div className="hidden grid-cols-4 rounded-lg border border-slate-200 bg-slate-100 p-1 sm:inline-grid">
                   <button
                     type="button"
-                    onClick={() => setWorkspaceMode("scan")}
+                    onClick={() => {
+                      setWorkspaceMode("scan");
+                      setMobileMenuOpen(false);
+                    }}
                     className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
                       workspaceMode === "scan" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
                     }`}
@@ -1083,7 +1097,10 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWorkspaceMode("pdf")}
+                    onClick={() => {
+                      setWorkspaceMode("pdf");
+                      setMobileMenuOpen(false);
+                    }}
                     className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
                       workspaceMode === "pdf" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
                     }`}
@@ -1092,15 +1109,82 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWorkspaceMode("compress")}
+                    onClick={() => {
+                      setWorkspaceMode("compress");
+                      setMobileMenuOpen(false);
+                    }}
                     className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
                       workspaceMode === "compress" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
                     }`}
                   >
                     Compress
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceMode("convert");
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                      workspaceMode === "convert" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                    }`}
+                  >
+                    Convert
+                  </button>
                 </div>
 
+                {mobileMenuOpen ? (
+                  <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-100 p-2 sm:hidden">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceMode("scan");
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                        workspaceMode === "scan" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                      }`}
+                    >
+                      Scan to PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceMode("pdf");
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                        workspaceMode === "pdf" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                      }`}
+                    >
+                      Merge PDFs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceMode("compress");
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                        workspaceMode === "compress" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                      }`}
+                    >
+                      Compress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWorkspaceMode("convert");
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                        workspaceMode === "convert" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                      }`}
+                    >
+                      Convert
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="grid gap-3 bg-slate-50/70 p-4 text-sm sm:grid-cols-3 sm:p-5">
@@ -1110,14 +1194,18 @@ export default function Home() {
                     ? "Scan workspace"
                     : workspaceMode === "pdf"
                       ? "PDF merge workspace"
-                      : "Compression workspace"}
+                      : workspaceMode === "compress"
+                        ? "Compression workspace"
+                        : "Conversion workspace"}
                 </p>
                 <p className="mt-1 text-slate-500">
                   {workspaceMode === "scan"
                     ? `${items.length} pages loaded`
                     : workspaceMode === "pdf"
                       ? `${pdfFiles.length} PDFs loaded`
-                      : "Client-side compression ready"}
+                      : workspaceMode === "compress"
+                        ? "Client-side compression ready"
+                        : "Client-side conversion ready"}
                 </p>
               </div>
               <div>
@@ -1127,7 +1215,9 @@ export default function Home() {
                     ? `${pdfOrderIds.length} pages in PDF`
                     : workspaceMode === "pdf"
                       ? `${pdfFiles.length} files in order`
-                      : "Single file compression"}
+                      : workspaceMode === "compress"
+                        ? "Single file compression"
+                        : "Single image conversion"}
                 </p>
               </div>
               <div>
@@ -1178,8 +1268,10 @@ export default function Home() {
               onMovePdf={movePdfFile}
               onReorderPdf={reorderPdfFile}
             />
-          ) : (
+          ) : workspaceMode === "compress" ? (
             <CompressorPanel />
+          ) : (
+            <ImageConverter />
           )}
         </main>
       </div>
