@@ -106,7 +106,11 @@ export default function CompressorPanel() {
       URL.revokeObjectURL(blobUrl);
       setStatus("Compressed file downloaded.");
     } catch {
-      setStatus("Compression failed. Try a different target or file.");
+      if (file.name.toLowerCase().endsWith(".heic") || file.name.toLowerCase().endsWith(".heif")) {
+        setStatus("HEIC decode failed in this browser. Try converting to JPG/PNG first.");
+      } else {
+        setStatus("Compression failed. Try a different target or file.");
+      }
     } finally {
       setIsCompressing(false);
     }

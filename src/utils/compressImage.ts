@@ -12,6 +12,32 @@ type CompressImageOptions = {
   preserveFormat?: boolean;
 };
 
+function isHeicLike(file: File) {
+  const type = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return type.includes("heic") || type.includes("heif") || name.endsWith(".heic") || name.endsWith(".heif");
+}
+
+async function normalizeImageFile(file: File) {
+  if (!isHeicLike(file)) {
+    return { blob: file as Blob, type: file.type || "image/jpeg" };
+  }
+
+  const heic2anyModule = await import("heic2any");
+  const converted = await heic2anyModule.default({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.95,
+  });
+  const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
+
+  if (!(convertedBlob instanceof Blob)) {
+    throw new Error("HEIC conversion failed");
+  }
+
+  return { blob: convertedBlob, type: convertedBlob.type || "image/jpeg" };
+}
+
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -48,8 +74,9 @@ function getOutputType(inputType: string, preserveFormat: boolean) {
 export async function compressImageFile(file: File, options: CompressImageOptions): Promise<CompressImageResult> {
   const maxIterations = options.maxIterations ?? 10;
   const minQuality = options.minQuality ?? 0.1;
-  const outputType = getOutputType(file.type, options.preserveFormat ?? true);
-  const objectUrl = URL.createObjectURL(file);
+  const normalizedInput = await normalizeImageFile(file);
+  const outputType = getOutputType(normalizedInput.type, options.preserveFormat ?? true);
+  const objectUrl = URL.createObjectURL(normalizedInput.blob);
 
   try {
     const image = await loadImage(objectUrl);
@@ -59,8 +86,8 @@ export async function compressImageFile(file: File, options: CompressImageOption
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas not supported");
 
-    let bestBlob: Blob = file;
-    let bestSizeDelta = Math.abs(file.size - options.targetBytes);
+    let bestBlob: Blob = normalizedInput.blob;
+    let bestSizeDelta = Math.abs(normalizedInput.blob.size - options.targetBytes);
     let warning: string | undefined;
 
     for (let i = 0; i < maxIterations; i += 1) {
