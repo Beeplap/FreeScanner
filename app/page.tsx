@@ -650,8 +650,9 @@ export default function Home() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: 1440 },
+          height: { ideal: 2048 },
+          aspectRatio: { ideal: A4_RATIO },
         },
         audio: false,
       });
@@ -676,13 +677,21 @@ export default function Home() {
 
     const video = videoRef.current;
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    const sourceWidth = video.videoWidth || 1280;
+    const sourceHeight = video.videoHeight || 720;
+    const sourceRatio = sourceWidth / sourceHeight;
+    const cropWidth = sourceRatio > A4_RATIO ? Math.round(sourceHeight * A4_RATIO) : sourceWidth;
+    const cropHeight = sourceRatio > A4_RATIO ? sourceHeight : Math.round(sourceWidth / A4_RATIO);
+    const cropX = Math.max(0, Math.floor((sourceWidth - cropWidth) / 2));
+    const cropY = Math.max(0, Math.floor((sourceHeight - cropHeight) / 2));
+
+    canvas.width = 1400;
+    canvas.height = Math.round(canvas.width / A4_RATIO);
 
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
 
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((value) => {

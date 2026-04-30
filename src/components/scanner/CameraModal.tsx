@@ -27,9 +27,12 @@ export default function CameraModal({ open, videoRef, cameraError, cameraReady, 
 
         <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="bg-slate-950 p-4">
-            <div className="relative overflow-hidden rounded-lg border border-white/10 bg-slate-900">
-              <video ref={videoRef} muted playsInline className="aspect-video w-full object-cover" />
-              <div className="pointer-events-none absolute inset-0 m-8 rounded-lg border-2 border-dashed border-emerald-300/80" />
+            <div className="mx-auto max-h-[72vh] max-w-[520px]">
+              <div className="relative aspect-[595/842] overflow-hidden rounded-lg border border-white/10 bg-slate-900 shadow-2xl">
+                <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
+                <div className="pointer-events-none absolute inset-4 rounded-lg border-2 border-emerald-300/90" />
+                <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(16,185,129,0.18)_1px,transparent_1px),linear-gradient(to_bottom,rgba(16,185,129,0.18)_1px,transparent_1px)] bg-[size:33.333%_25%]" />
+              </div>
             </div>
           </div>
           <div className="space-y-4 p-5">
