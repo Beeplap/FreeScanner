@@ -39,11 +39,14 @@ export default function ScanGrid({
 }: Props) {
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const previousRectsRef = useRef(new Map<string, DOMRect>());
+  const wasDraggingRef = useRef(false);
   const orderKey = displayItems.map((item) => item.id).join("|");
 
   useLayoutEffect(() => {
     const previousRects = previousRectsRef.current;
     const nextRects = new Map<string, DOMRect>();
+    const isDragging = draggingPdfId !== null;
+    const shouldAnimate = !isDragging && wasDraggingRef.current;
 
     cardRefs.current.forEach((element, id) => {
       const nextRect = element.getBoundingClientRect();
@@ -51,10 +54,13 @@ export default function ScanGrid({
 
       const previousRect = previousRects.get(id);
       if (!previousRect) return;
+      if (!shouldAnimate) return;
 
       const deltaX = previousRect.left - nextRect.left;
       const deltaY = previousRect.top - nextRect.top;
       if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+      const travelDistance = Math.hypot(deltaX, deltaY);
+      if (travelDistance > 260) return;
 
       element.getAnimations().forEach((animation) => animation.cancel());
       element.animate(
@@ -63,13 +69,14 @@ export default function ScanGrid({
           { transform: "translate(0, 0)" },
         ],
         {
-          duration: 190,
+          duration: Math.max(120, Math.min(220, travelDistance * 1.1)),
           easing: "cubic-bezier(0.2, 0, 0, 1)",
         }
       );
     });
 
     previousRectsRef.current = nextRects;
+    wasDraggingRef.current = isDragging;
   }, [orderKey, draggingPdfId]);
 
   function setCardRef(id: string, element: HTMLElement | null) {

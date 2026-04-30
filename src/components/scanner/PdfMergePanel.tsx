@@ -33,7 +33,7 @@ export default function PdfMergePanel({
   const [draggingPdfId, setDraggingPdfId] = React.useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = React.useState<string | null>(null);
 
-  function startDrag(id: string, e: React.PointerEvent<HTMLButtonElement>) {
+  function startDrag(id: string, e: React.PointerEvent<HTMLElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
 
     e.preventDefault();
@@ -44,7 +44,7 @@ export default function PdfMergePanel({
     setDragOverPdfId(id);
   }
 
-  function moveDrag(e: React.PointerEvent<HTMLButtonElement>) {
+  function moveDrag(e: React.PointerEvent<HTMLElement>) {
     const draggedId = dragPdfIdRef.current;
     if (!draggedId) return;
 
@@ -60,7 +60,7 @@ export default function PdfMergePanel({
     onReorderPdf(draggedId, overId);
   }
 
-  function endDrag(e: React.PointerEvent<HTMLButtonElement>) {
+  function endDrag(e: React.PointerEvent<HTMLElement>) {
     if (!dragPdfIdRef.current) return;
 
     e.preventDefault();
@@ -71,6 +71,14 @@ export default function PdfMergePanel({
     dragPdfIdRef.current = null;
     setDraggingPdfId(null);
     setDragOverPdfId(null);
+  }
+
+  function handleDesktopCardPointerDown(id: string, e: React.PointerEvent<HTMLElement>) {
+    if (e.pointerType !== "mouse" && e.pointerType !== "pen") return;
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+
+    startDrag(id, e);
   }
 
   return (
@@ -109,9 +117,13 @@ export default function PdfMergePanel({
                   key={item.id}
                   data-merge-pdf-card="true"
                   data-merge-pdf-id={item.id}
+                  onPointerDown={(e) => handleDesktopCardPointerDown(item.id, e)}
+                  onPointerMove={moveDrag}
+                  onPointerUp={endDrag}
+                  onPointerCancel={endDrag}
                   className={`overflow-hidden rounded-lg border bg-white shadow-sm transition ${
                     dragOverPdfId === item.id ? "border-emerald-400 ring-2 ring-emerald-100" : "border-slate-200"
-                  } ${draggingPdfId === item.id ? "opacity-75" : ""}`}
+                  } ${draggingPdfId === item.id ? "opacity-75 sm:cursor-grabbing" : "sm:cursor-grab"}`}
                 >
                   <div className="relative bg-slate-100">
                     <div className="absolute left-2 top-2 z-10 rounded-md bg-slate-950 px-2 py-1 text-xs font-semibold text-white">
@@ -123,7 +135,7 @@ export default function PdfMergePanel({
                       onPointerMove={moveDrag}
                       onPointerUp={endDrag}
                       onPointerCancel={endDrag}
-                      className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200"
+                      className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 sm:hidden"
                       style={{ cursor: draggingPdfId === item.id ? "grabbing" : "grab", touchAction: "none" }}
                       aria-label={`Drag ${item.name} to reorder`}
                       title="Drag to reorder"
@@ -131,13 +143,13 @@ export default function PdfMergePanel({
                       <HandIcon />
                     </button>
                     {item.previewUrl ? (
-                      <img src={item.previewUrl} alt={`First page preview of ${item.name}`} className="aspect-[4/5] w-full bg-white object-contain p-3" />
+                      <img src={item.previewUrl} alt={`First page preview of ${item.name}`} className="aspect-4/5 w-full bg-white object-contain p-3" />
                     ) : item.previewFailed ? (
-                      <div className="grid aspect-[4/5] w-full place-items-center p-6 text-center text-sm text-slate-500">
+                      <div className="grid aspect-4/5 w-full place-items-center p-6 text-center text-sm text-slate-500">
                         Preview unavailable
                       </div>
                     ) : (
-                      <div className="grid aspect-[4/5] w-full place-items-center p-6 text-center text-sm text-slate-500">
+                      <div className="grid aspect-4/5 w-full place-items-center p-6 text-center text-sm text-slate-500">
                         Rendering preview...
                       </div>
                     )}

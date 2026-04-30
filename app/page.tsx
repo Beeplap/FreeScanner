@@ -783,19 +783,6 @@ export default function Home() {
     handlePdfDragEnd();
   }
 
-  function startCropForPdfOrder() {
-    if (pdfOrderItems.length === 0) {
-      setStatusMessage("Select images first to crop.");
-      return;
-    }
-    setCropQueue(pdfOrderItems.map((item) => item.id));
-    setCropCursor(0);
-    setCropOpen(true);
-    setStatusMessage(
-      `Cropping ${pdfOrderItems.length} page${pdfOrderItems.length > 1 ? "s" : ""} for PDF...`
-    );
-  }
-
   function startCropForOne(itemId: string) {
     setCropQueue([itemId]);
     setCropCursor(0);
