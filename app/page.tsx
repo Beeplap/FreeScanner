@@ -5,7 +5,6 @@ import { getPdfFirstPagePreview, getPdfPageCount, imagesToFullPageA4PDF, mergePd
 import CropModal from "../src/components/CropModal";
 import ImageConverter from "../src/components/ImageConverter";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
-import CameraModal from "../src/components/scanner/CameraModal";
 import CompressorPanel from "../src/components/scanner/CompressorPanel";
 import ExportPanel from "../src/components/scanner/ExportPanel";
 import PdfMergePanel from "../src/components/scanner/PdfMergePanel";
@@ -21,9 +20,6 @@ export default function Home() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("scan");
   const [pdfFiles, setPdfFiles] = useState<PdfMergeItem[]>([]);
   const [pdfOrderIds, setPdfOrderIds] = useState<string[]>([]);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [cameraReady, setCameraReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Ready.");
   const [supabaseReady, setSupabaseReady] = useState(false);
@@ -45,8 +41,6 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const pdfEditorPageRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
   const pdfFilesRef = useRef<PdfMergeItem[]>([]);
   const sessionIdRef = useRef<string | null>(null);
@@ -194,7 +188,6 @@ export default function Home() {
           URL.revokeObjectURL(item.originalPreviewUrl);
         }
       });
-      stopCamera();
       pdfFilesRef.current.forEach((item) => {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       });
@@ -357,14 +350,6 @@ export default function Home() {
       cancelled = true;
     };
   }, [pdfEditorActiveItem, pdfEditorImageSizes]);
-
-  function stopCamera() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setCameraReady(false);
-  }
 
   function getExtFromBlobType(type: string) {
     if (type.includes("png")) return "png";
@@ -678,84 +663,6 @@ export default function Home() {
     } finally {
       setIsProcessing(false);
     }
-  }
-
-  async function handleCameraOpen() {
-    setCameraError(null);
-    stopCamera();
-    setIsCameraOpen(true);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1440 },
-          height: { ideal: 2048 },
-          aspectRatio: { ideal: A4_RATIO },
-        },
-        audio: false,
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      setCameraReady(true);
-      setStatusMessage("Camera connected. Frame your document and capture.");
-    } catch {
-      setCameraError("Camera access was blocked. Allow permission in the browser and try again.");
-      setStatusMessage("Camera permission is needed to scan with phone or laptop camera.");
-    }
-  }
-
-  async function captureFrame() {
-    if (!videoRef.current) return;
-
-    const video = videoRef.current;
-    const canvas = document.createElement("canvas");
-    const sourceWidth = video.videoWidth || 1280;
-    const sourceHeight = video.videoHeight || 720;
-    const sourceRatio = sourceWidth / sourceHeight;
-    const cropWidth = sourceRatio > A4_RATIO ? Math.round(sourceHeight * A4_RATIO) : sourceWidth;
-    const cropHeight = sourceRatio > A4_RATIO ? sourceHeight : Math.round(sourceWidth / A4_RATIO);
-    const cropX = Math.max(0, Math.floor((sourceWidth - cropWidth) / 2));
-    const cropY = Math.max(0, Math.floor((sourceHeight - cropHeight) / 2));
-
-    canvas.width = 1400;
-    canvas.height = Math.round(canvas.width / A4_RATIO);
-
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    context.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((value) => {
-        if (!value) {
-          reject(new Error("Failed to capture frame"));
-          return;
-        }
-        resolve(value);
-      }, "image/jpeg", 0.95);
-    });
-
-    await addBlobItems([
-      {
-        blob,
-        name: `Camera scan ${new Date().toLocaleTimeString()}`,
-        kind: "camera",
-      },
-    ]);
-
-    setStatusMessage("Captured from camera and added to your scan tray.");
-  }
-
-  function closeCamera() {
-    stopCamera();
-    setIsCameraOpen(false);
   }
 
   function handlePdfDragStart(id: string) {
@@ -1245,8 +1152,13 @@ export default function Home() {
                 onReorderHandlePointerEnd={onReorderHandlePointerEnd}
                 startCropForOne={startCropForOne}
                 removeItem={removeItem}
-                onImportScans={() => fileInputRef.current?.click()}
-                onOpenCamera={() => void handleCameraOpen()}
+                onAddScans={(files) => {
+                  if (files && files.length > 0) {
+                    void handlePickedFiles(files);
+                    return;
+                  }
+                  fileInputRef.current?.click();
+                }}
                 isProcessing={isProcessing}
               />
               <ExportPanel
@@ -1266,7 +1178,13 @@ export default function Home() {
             <PdfMergePanel
               pdfFiles={pdfFiles}
               isProcessing={isProcessing}
-              onAddPdfs={() => pdfInputRef.current?.click()}
+              onAddPdfs={(files) => {
+                if (files && files.length > 0) {
+                  void handlePickedPdfFiles(files);
+                  return;
+                }
+                pdfInputRef.current?.click();
+              }}
               onMergePdfs={exportMergedPdfs}
               onRemovePdf={removePdfFile}
               onMovePdf={movePdfFile}
@@ -1308,14 +1226,6 @@ export default function Home() {
         endTransform={endTransform}
       />
 
-      <CameraModal
-        open={isCameraOpen}
-        videoRef={videoRef}
-        cameraError={cameraError}
-        cameraReady={cameraReady}
-        captureFrame={captureFrame}
-        closeCamera={closeCamera}
-      />
         </>
       ) : null}
     </div>

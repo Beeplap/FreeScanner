@@ -5,6 +5,7 @@ import Slider from "../Slider";
 import Upload from "../Upload";
 import { compressImageFile } from "../../utils/compressImage";
 import { compressPdfFile } from "../../utils/compressPDF";
+import { getPdfFirstPagePreview } from "../../utils/pdfUtils";
 
 const MIN_TARGET_KB = 10;
 
@@ -34,6 +35,7 @@ export default function CompressorPanel() {
   const [resultBytes, setResultBytes] = React.useState<number | null>(null);
   const [warning, setWarning] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState("Upload a file to begin.");
+  const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
 
   const originalBytes = file?.size ?? 0;
   const maxTargetKb = Math.max(MIN_TARGET_KB, Math.floor(originalBytes / 1024));
@@ -50,13 +52,28 @@ export default function CompressorPanel() {
     setEstimatedBytes(nextEstimated);
   }, [file, targetKb]);
 
+  React.useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   function handleSelectFile(nextFile: File) {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(nextFile);
     setResultBytes(null);
     setWarning(null);
     setStatus("Adjust target size, then compress.");
     const initialTarget = Math.min(Math.max(MIN_TARGET_KB, Math.floor(nextFile.size / 2048)), Math.floor(nextFile.size / 1024));
     setTargetKb(initialTarget);
+    const isNextPdf = nextFile.type === "application/pdf" || nextFile.name.toLowerCase().endsWith(".pdf");
+    if (isNextPdf) {
+      void getPdfFirstPagePreview(nextFile)
+        .then((blob) => setPreviewUrl(URL.createObjectURL(blob)))
+        .catch(() => setPreviewUrl(null));
+      return;
+    }
+    setPreviewUrl(URL.createObjectURL(nextFile));
   }
 
   async function compressAndDownload() {
@@ -128,10 +145,19 @@ export default function CompressorPanel() {
         <Upload onFileSelected={handleSelectFile} disabled={isCompressing} />
 
         {file ? (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
-            <p className="font-semibold text-slate-900">{file.name}</p>
-            <p className="mt-1 text-slate-600">Original size: {formatBytes(file.size)}</p>
-            <p className="mt-1 text-slate-500">Type: {isPdf ? "PDF" : file.type || "Image"}</p>
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              {previewUrl ? (
+                <img src={previewUrl} alt={`Preview of ${file.name}`} className="aspect-square w-full object-cover" />
+              ) : (
+                <div className="grid aspect-square place-items-center text-sm text-slate-500">Preview unavailable</div>
+              )}
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+              <p className="font-semibold text-slate-900">{file.name}</p>
+              <p className="mt-1 text-slate-600">Original size: {formatBytes(file.size)}</p>
+              <p className="mt-1 text-slate-500">Type: {isPdf ? "PDF" : file.type || "Image"}</p>
+            </div>
           </div>
         ) : null}
 

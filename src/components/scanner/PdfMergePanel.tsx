@@ -7,7 +7,7 @@ import type { PdfMergeItem } from "./types";
 type Props = {
   pdfFiles: PdfMergeItem[];
   isProcessing: boolean;
-  onAddPdfs: () => void;
+  onAddPdfs: (files?: FileList | null) => void;
   onMergePdfs: () => void | Promise<void>;
   onRemovePdf: (id: string) => void;
   onMovePdf: (id: string, direction: -1 | 1) => void;
@@ -81,6 +81,13 @@ export default function PdfMergePanel({
     startDrag(id, e);
   }
 
+  function handleDrop(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isProcessing) return;
+    onAddPdfs(e.dataTransfer.files);
+  }
+
   return (
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="panel p-5">
@@ -91,7 +98,9 @@ export default function PdfMergePanel({
           </div>
           <button
             type="button"
-            onClick={onAddPdfs}
+            onClick={() => onAddPdfs()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDrop}
             className="inline-flex items-center justify-center rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
           >
             Add PDFs
@@ -102,12 +111,14 @@ export default function PdfMergePanel({
           {pdfFiles.length === 0 ? (
             <button
               type="button"
-              onClick={onAddPdfs}
+              onClick={() => onAddPdfs()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
               className="flex min-h-72 w-full flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center transition hover:border-slate-400 hover:bg-white"
             >
-              <span className="text-base font-semibold text-slate-950">Select two or more PDFs</span>
+              <span className="text-base font-semibold text-slate-950">Drop a file here</span>
               <span className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                Files are merged locally in your browser, preserving original PDF pages and order.
+                or click to choose PDFs. Files are merged locally in your browser.
               </span>
             </button>
           ) : (

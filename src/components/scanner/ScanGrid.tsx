@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useLayoutEffect, useRef } from "react";
-import { CameraIcon, EditIcon, HandIcon, TrashIcon, UploadIcon } from "./icons";
+import { EditIcon, HandIcon, TrashIcon, UploadIcon } from "./icons";
 import type { MergeMode, ScanItem } from "./types";
 
 type Props = {
@@ -16,8 +16,7 @@ type Props = {
   onReorderHandlePointerEnd: (e: React.PointerEvent<HTMLElement>) => void;
   startCropForOne: (id: string) => void;
   removeItem: (id: string) => void;
-  onImportScans: () => void;
-  onOpenCamera: () => void;
+  onAddScans: (files?: FileList | null) => void;
   isProcessing: boolean;
 };
 
@@ -33,8 +32,7 @@ export default function ScanGrid({
   onReorderHandlePointerEnd,
   startCropForOne,
   removeItem,
-  onImportScans,
-  onOpenCamera,
+  onAddScans,
   isProcessing,
 }: Props) {
   const cardRefs = useRef(new Map<string, HTMLElement>());
@@ -96,6 +94,13 @@ export default function ScanGrid({
     onReorderHandlePointerDown(itemId, e);
   }
 
+  function handleDrop(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isProcessing) return;
+    onAddScans(e.dataTransfer.files);
+  }
+
   return (
     <div className="panel overflow-hidden">
       <div className="border-b border-slate-200 bg-white p-4 sm:p-5">
@@ -119,21 +124,12 @@ export default function ScanGrid({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onImportScans}
+                onClick={() => onAddScans()}
                 disabled={isProcessing}
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <UploadIcon />
-                Import
-              </button>
-              <button
-                type="button"
-                onClick={onOpenCamera}
-                disabled={isProcessing}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <CameraIcon />
-                Camera
+                Add
               </button>
             </div>
           </div>
@@ -142,32 +138,20 @@ export default function ScanGrid({
 
       <div className={`grid gap-4 p-4 sm:p-5 ${mergeMode === "twoUp" ? "grid-cols-2" : "grid-cols-1"} sm:grid-cols-2 2xl:grid-cols-3`}>
         {items.length === 0 ? (
-          <div className="col-span-full rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center">
+          <button
+            type="button"
+            onClick={() => onAddScans()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDrop}
+            disabled={isProcessing}
+            className="col-span-full flex min-h-72 w-full flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-6 py-12 text-center transition hover:border-slate-400 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-emerald-700 shadow-sm ring-1 ring-slate-200">
-              <CameraIcon />
+              <UploadIcon />
             </div>
             <h3 className="mt-4 text-base font-semibold text-slate-950">No pages yet</h3>
-            <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
-              <button
-                type="button"
-                onClick={onImportScans}
-                disabled={isProcessing}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <UploadIcon />
-                Import files
-              </button>
-              <button
-                type="button"
-                onClick={onOpenCamera}
-                disabled={isProcessing}
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <CameraIcon />
-                Open camera
-              </button>
-            </div>
-          </div>
+            <span className="mt-2 text-sm text-slate-500">Drop a file here or click to choose images/PDF.</span>
+          </button>
         ) : (
           displayItems.map((item) => {
             const selected = pdfOrderIds.includes(item.id);
