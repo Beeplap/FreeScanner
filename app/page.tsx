@@ -36,6 +36,11 @@ type PageEdit = {
   filter: PageFilter;
 };
 
+type ImageSize = { w: number; h: number };
+type EditorFrame = { x: number; y: number; w: number; h: number };
+type EditorBox = EditorFrame & { rotation: number };
+type TransformHandle = "nw" | "ne" | "se" | "sw";
+
 const defaultPageEdit: PageEdit = {
   offsetX: 0,
   offsetY: 0,
@@ -53,6 +58,63 @@ const filterOptions: { id: PageFilter; label: string }[] = [
   { id: "bw", label: "Black & white" },
   { id: "enhanced", label: "Enhanced B/W" },
 ];
+
+function EditIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v6h6" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+function RotateLeftIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 7v6h6" />
+      <path d="M20 17a8 8 0 0 0-13.7-5.7L4 13" />
+    </svg>
+  );
+}
+
+function RotateRightIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M20 7v6h-6" />
+      <path d="M4 17a8 8 0 0 1 13.7-5.7L20 13" />
+    </svg>
+  );
+}
 
 const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
   { id: "grid", label: "Photo Grid", detail: "Best for notes and receipts" },
@@ -84,8 +146,10 @@ export default function Home() {
   const [pdfEditorActiveId, setPdfEditorActiveId] = useState<string | null>(null);
   const [pdfEditorPreviewUrl, setPdfEditorPreviewUrl] = useState<string | null>(null);
   const [isRenderingPdfEditor, setIsRenderingPdfEditor] = useState(false);
+  const [pdfEditorImageSizes, setPdfEditorImageSizes] = useState<Record<string, ImageSize>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfEditorPageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
@@ -93,6 +157,16 @@ export default function Home() {
   const supabaseUserIdRef = useRef<string | null>(null);
   const dragPdfIdRef = useRef<string | null>(null);
   const previewTokenRef = useRef<symbol | null>(null);
+  const pdfEditorTokenRef = useRef<symbol | null>(null);
+  const transformRef = useRef<{
+    mode: "move" | "resize";
+    handle?: TransformHandle;
+    pointerId: number;
+    startPointer: { x: number; y: number };
+    startEdit: PageEdit;
+    startBox: EditorBox;
+    frame: EditorFrame;
+  } | null>(null);
   const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
 
@@ -126,6 +200,15 @@ export default function Home() {
     () => (pdfEditorActiveId ? pdfEditorItems.find((item) => item.id === pdfEditorActiveId) ?? null : null),
     [pdfEditorActiveId, pdfEditorItems]
   );
+  const pdfEditorActiveIndex = useMemo(
+    () => (pdfEditorActiveId ? pdfEditorItems.findIndex((item) => item.id === pdfEditorActiveId) : -1),
+    [pdfEditorActiveId, pdfEditorItems]
+  );
+  const pdfEditorActiveSize = pdfEditorActiveItem ? pdfEditorImageSizes[pdfEditorActiveItem.id] ?? null : null;
+  const pdfEditorBox = useMemo(() => {
+    if (!pdfEditorActiveItem || !pdfEditorActiveSize || pdfEditorActiveIndex < 0) return null;
+    return getEditorBox(pdfEditorActiveItem, pdfEditorActiveSize, mergeMode, pdfEditorActiveIndex);
+  }, [mergeMode, pdfEditorActiveIndex, pdfEditorActiveItem, pdfEditorActiveSize]);
 
   useEffect(() => {
     setIsClient(true);
@@ -223,22 +306,22 @@ export default function Home() {
     }
 
     const runToken = Symbol("pdf-editor");
-    previewTokenRef.current = runToken;
+    pdfEditorTokenRef.current = runToken;
     let nextUrl: string | null = null;
     setIsRenderingPdfEditor(true);
 
     void renderEditedPdfPages(pdfEditorItems, mergeMode, 900)
       .then(async (pages) => {
-        if (previewTokenRef.current !== runToken) return;
+        if (pdfEditorTokenRef.current !== runToken) return;
         if (!pages[0]) return;
         nextUrl = await blobToDataUrl(pages[0]);
-        if (previewTokenRef.current !== runToken) return;
+        if (pdfEditorTokenRef.current !== runToken) return;
         setPdfEditorPreviewUrl((current) => {
           return nextUrl ?? current;
         });
       })
       .finally(() => {
-        if (previewTokenRef.current === runToken) {
+        if (pdfEditorTokenRef.current === runToken) {
           setIsRenderingPdfEditor(false);
         }
       });
@@ -255,6 +338,29 @@ export default function Home() {
       setPdfEditorActiveId(pdfEditorItems[0].id);
     }
   }, [pdfEditorActiveId, pdfEditorItems, pdfEditorPageIndex]);
+
+  useEffect(() => {
+    if (!pdfEditorActiveItem) return;
+    if (pdfEditorImageSizes[pdfEditorActiveItem.id]) return;
+
+    let cancelled = false;
+    void loadImage(pdfEditorActiveItem.previewUrl)
+      .then((image) => {
+        if (cancelled) return;
+        setPdfEditorImageSizes((current) => ({
+          ...current,
+          [pdfEditorActiveItem.id]: {
+            w: image.naturalWidth || image.width,
+            h: image.naturalHeight || image.height,
+          },
+        }));
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfEditorActiveItem, pdfEditorImageSizes]);
 
   function stopCamera() {
     if (streamRef.current) {
@@ -773,6 +879,71 @@ export default function Home() {
     updatePageEdit(id, { ...defaultPageEdit, crop: { ...defaultPageEdit.crop } });
   }
 
+  function getEditorPointer(e: React.PointerEvent) {
+    const el = pdfEditorPageRef.current;
+    if (!el) return { x: e.clientX, y: e.clientY };
+    const rect = el.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function beginTransform(e: React.PointerEvent<HTMLDivElement>, mode: "move" | "resize", handle?: TransformHandle) {
+    if (!pdfEditorActiveItem || !pdfEditorBox || !pdfEditorActiveSize || pdfEditorActiveIndex < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = getEditorFrame(mergeMode, pdfEditorActiveIndex);
+    transformRef.current = {
+      mode,
+      handle,
+      pointerId: e.pointerId,
+      startPointer: getEditorPointer(e),
+      startEdit: pdfEditorActiveItem.edit,
+      startBox: pdfEditorBox,
+      frame,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handleTransformMove(e: React.PointerEvent<HTMLDivElement>) {
+    const transform = transformRef.current;
+    if (!transform || !pdfEditorActiveItem) return;
+    const rect = pdfEditorPageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const pointer = getEditorPointer(e);
+    const dx = pointer.x - transform.startPointer.x;
+    const dy = pointer.y - transform.startPointer.y;
+    const frameW = transform.frame.w * rect.width;
+    const frameH = transform.frame.h * rect.height;
+
+    if (transform.mode === "move") {
+      updatePageEdit(pdfEditorActiveItem.id, {
+        offsetX: clamp(transform.startEdit.offsetX + dx / frameW, -1.2, 1.2),
+        offsetY: clamp(transform.startEdit.offsetY + dy / frameH, -1.2, 1.2),
+      });
+      return;
+    }
+
+    const boxCenter = {
+      x: (transform.startBox.x + transform.startBox.w / 2) * rect.width,
+      y: (transform.startBox.y + transform.startBox.h / 2) * rect.height,
+    };
+    const startCorner = getBoxCorner(transform.startBox, transform.handle ?? "se", rect);
+    const startDistance = Math.max(16, Math.hypot(startCorner.x - boxCenter.x, startCorner.y - boxCenter.y));
+    const nextDistance = Math.max(16, Math.hypot(pointer.x - boxCenter.x, pointer.y - boxCenter.y));
+    updatePageEdit(pdfEditorActiveItem.id, {
+      zoom: clamp(transform.startEdit.zoom * (nextDistance / startDistance), 0.25, 4),
+    });
+  }
+
+  function endTransform(e?: React.PointerEvent<HTMLDivElement>) {
+    if (e && transformRef.current?.pointerId === e.pointerId) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    transformRef.current = null;
+  }
+
   async function exportPdf() {
     if (pdfOrderItems.length === 0) {
       setStatusMessage("Select pages to merge.");
@@ -957,38 +1128,24 @@ export default function Home() {
                             </p>
                           </div>
                           <div className="flex gap-2">
-                            {selected ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => startCropForOne(item.id)}
-                                  className="flex-1 rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSelected(item.id)}
-                                  className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
-                                >
-                                  Unselect
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeItem(item.id)}
-                                  className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
-                                >
-                                  Delete
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => toggleSelected(item.id)}
-                                className="flex-1 rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
-                              >
-                                Select
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => startCropForOne(item.id)}
+                              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-800 transition hover:bg-emerald-100"
+                              aria-label={`Edit ${item.name}`}
+                              title="Edit image"
+                            >
+                              <EditIcon />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeItem(item.id)}
+                              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 transition hover:bg-rose-100"
+                              aria-label={`Delete ${item.name}`}
+                              title="Delete"
+                            >
+                              <TrashIcon />
+                            </button>
                           </div>
                         </div>
                       </article>
@@ -1058,122 +1215,10 @@ export default function Home() {
                   <p className="text-sm font-semibold text-slate-800">
                     Preview (first {mergeMode === "twoUp" ? "2-up pages" : "pages"})
                   </p>
-                  {selectedEditorItem ? (
-                    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                            Editing page
-                          </p>
-                          <p className="mt-1 truncate text-sm font-semibold text-slate-900">
-                            {selectedEditorItem.name}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => resetPageEdit(selectedEditorItem.id)}
-                          className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-emerald-100 hover:bg-slate-50"
-                        >
-                          Reset
-                        </button>
-                      </div>
-
-                      <div className="mt-3 grid gap-3">
-                        <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                          Size
-                          <input
-                            type="range"
-                            min="0.35"
-                            max="2.5"
-                            step="0.01"
-                            value={selectedEditorItem.edit.zoom}
-                            onChange={(e) =>
-                              updatePageEdit(selectedEditorItem.id, { zoom: Number(e.target.value) })
-                            }
-                          />
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                            Left / right
-                            <input
-                              type="range"
-                              min="-0.6"
-                              max="0.6"
-                              step="0.01"
-                              value={selectedEditorItem.edit.offsetX}
-                              onChange={(e) =>
-                                updatePageEdit(selectedEditorItem.id, { offsetX: Number(e.target.value) })
-                              }
-                            />
-                          </label>
-                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                            Up / down
-                            <input
-                              type="range"
-                              min="-0.6"
-                              max="0.6"
-                              step="0.01"
-                              value={selectedEditorItem.edit.offsetY}
-                              onChange={(e) =>
-                                updatePageEdit(selectedEditorItem.id, { offsetY: Number(e.target.value) })
-                              }
-                            />
-                          </label>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                            Rotate
-                            <input
-                              type="range"
-                              min="-180"
-                              max="180"
-                              step="1"
-                              value={selectedEditorItem.edit.rotation}
-                              onChange={(e) =>
-                                updatePageEdit(selectedEditorItem.id, { rotation: Number(e.target.value) })
-                              }
-                            />
-                          </label>
-                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                            Filter
-                            <select
-                              value={selectedEditorItem.edit.filter}
-                              onChange={(e) =>
-                                updatePageEdit(selectedEditorItem.id, { filter: e.target.value as PageFilter })
-                              }
-                              className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs"
-                            >
-                              {filterOptions.map((option) => (
-                                <option key={option.id} value={option.id}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {(["top", "right", "bottom", "left"] as const).map((side) => (
-                            <label key={side} className="grid gap-1 text-xs font-semibold capitalize text-slate-700">
-                              Crop {side}
-                              <input
-                                type="range"
-                                min="0"
-                                max="0.45"
-                                step="0.01"
-                                value={selectedEditorItem.edit.crop[side]}
-                                onChange={(e) =>
-                                  updatePageEdit(selectedEditorItem.id, {
-                                    crop: { [side]: Number(e.target.value) } as Partial<PageEdit["crop"]>,
-                                  })
-                                }
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : pdfOrderItems.length > 0 ? (
-                    <p className="mt-2 text-sm text-slate-500">Choose a preview page below to adjust its A4 layout.</p>
+                  {pdfOrderItems.length > 0 ? (
+                    <p className="mt-2 text-sm text-slate-500">
+                      Open a preview page to adjust image placement, crop, rotation, and scanner filters on the A4 sheet.
+                    </p>
                   ) : null}
                   {pdfOrderItems.length === 0 ? (
                     <p className="mt-2 text-sm text-slate-500">Select images to preview merged A4 output.</p>
@@ -1203,34 +1248,15 @@ export default function Home() {
                           <div className="absolute left-2 top-2 z-10 rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white">
                             {pageNumber}
                           </div>
-                          <div className="absolute right-2 top-2 z-20 flex gap-1">
-                            {topItem ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedEditorId(topItem.id)}
-                                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm ${
-                                  selectedEditorId === topItem.id
-                                    ? "bg-emerald-500 text-white"
-                                    : "bg-white text-slate-700"
-                                }`}
-                              >
-                                {mergeMode === "twoUp" ? "Edit top" : "Edit"}
-                              </button>
-                            ) : null}
-                            {bottomItem ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedEditorId(bottomItem.id)}
-                                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm ${
-                                  selectedEditorId === bottomItem.id
-                                    ? "bg-emerald-500 text-white"
-                                    : "bg-white text-slate-700"
-                                }`}
-                              >
-                                Edit bottom
-                              </button>
-                            ) : null}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openPdfPageEditor(pageIdx)}
+                            className="absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-emerald-50 hover:text-emerald-700"
+                            aria-label={`Edit PDF page ${pageNumber}`}
+                            title="Edit A4 page"
+                          >
+                            <EditIcon />
+                          </button>
 
                           <div className="sm:hidden">
                       {mergeMode === "twoUp" ? (
@@ -1312,6 +1338,197 @@ export default function Home() {
         onCancel={cancelCrop}
         onApply={handleCropApply}
       />
+
+      {pdfEditorPageIndex !== null ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:items-center">
+          <div className="max-h-[96vh] w-full max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">A4 PDF editor</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">
+                  Page {pdfEditorPageIndex + 1}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closePdfPageEditor}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
+                aria-label="Close PDF page editor"
+                title="Close"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="grid max-h-[calc(96vh-68px)] overflow-y-auto lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="bg-slate-100 p-4 sm:p-6">
+                <div className="mx-auto max-w-[520px]">
+                  <div
+                    ref={pdfEditorPageRef}
+                    className="relative aspect-[595/842] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200"
+                    onPointerMove={handleTransformMove}
+                    onPointerUp={endTransform}
+                    onPointerCancel={endTransform}
+                  >
+                    {pdfEditorPreviewUrl ? (
+                      <img
+                        src={pdfEditorPreviewUrl}
+                        alt={`PDF page ${pdfEditorPageIndex + 1} preview`}
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <div className="grid h-full place-items-center text-sm text-slate-500">
+                        Rendering A4 page...
+                      </div>
+                    )}
+                    {isRenderingPdfEditor ? (
+                      <div className="absolute right-3 top-3 rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">
+                        Updating
+                      </div>
+                    ) : null}
+                    {pdfEditorBox ? (
+                      <div
+                        className="absolute z-20 cursor-move border-2 border-emerald-400 bg-emerald-300/10 shadow-[0_0_0_999px_rgba(15,23,42,0.06)]"
+                        style={{
+                          left: `${pdfEditorBox.x * 100}%`,
+                          top: `${pdfEditorBox.y * 100}%`,
+                          width: `${pdfEditorBox.w * 100}%`,
+                          height: `${pdfEditorBox.h * 100}%`,
+                          transform: `rotate(${pdfEditorBox.rotation}deg)`,
+                          transformOrigin: "center",
+                          touchAction: "none",
+                        }}
+                        onPointerDown={(e) => beginTransform(e, "move")}
+                        role="application"
+                        aria-label="Selected image transform frame"
+                      >
+                        {(["nw", "ne", "se", "sw"] as const).map((handle) => (
+                          <div
+                            key={handle}
+                            className={`absolute h-5 w-5 rounded-md border-2 border-white bg-emerald-500 shadow-lg ${
+                              handle === "nw"
+                                ? "-left-2.5 -top-2.5 cursor-nwse-resize"
+                                : handle === "ne"
+                                  ? "-right-2.5 -top-2.5 cursor-nesw-resize"
+                                  : handle === "se"
+                                    ? "-bottom-2.5 -right-2.5 cursor-nwse-resize"
+                                    : "-bottom-2.5 -left-2.5 cursor-nesw-resize"
+                            }`}
+                            onPointerDown={(e) => beginTransform(e, "resize", handle)}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 p-4 sm:p-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Image slot</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {pdfEditorItems.map((item, index) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setPdfEditorActiveId(item.id)}
+                        className={`rounded-2xl border px-3 py-2 text-left text-sm font-semibold transition ${
+                          pdfEditorActiveId === item.id
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <span className="block text-xs uppercase tracking-[0.18em] text-slate-400">
+                          {mergeMode === "twoUp" ? (index === 0 ? "Top" : "Bottom") : "Page"}
+                        </span>
+                        <span className="mt-1 block truncate">{item.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {pdfEditorActiveItem ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Adjust</p>
+                        <h3 className="mt-1 truncate text-base font-semibold text-slate-900">
+                          {pdfEditorActiveItem.name}
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => resetPageEdit(pdfEditorActiveItem.id)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        aria-label="Reset selected image placement"
+                        title="Reset"
+                      >
+                        <ResetIcon />
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Rotate</p>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updatePageEdit(pdfEditorActiveItem.id, {
+                                rotation: pdfEditorActiveItem.edit.rotation - 90,
+                              })
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            <RotateLeftIcon />
+                            Left
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updatePageEdit(pdfEditorActiveItem.id, {
+                                rotation: pdfEditorActiveItem.edit.rotation + 90,
+                              })
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            <RotateRightIcon />
+                            Right
+                          </button>
+                        </div>
+                      </div>
+                      <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                        Filter
+                        <select
+                          value={pdfEditorActiveItem.edit.filter}
+                          onChange={(e) =>
+                            updatePageEdit(pdfEditorActiveItem.id, { filter: e.target.value as PageFilter })
+                          }
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                        >
+                          {filterOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={closePdfPageEditor}
+                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isCameraOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
@@ -1429,6 +1646,65 @@ function createA4Canvas(width: number, height: number) {
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
+}
+
+function getEditorFrame(mergeMode: "single" | "twoUp", slotIndex: number): EditorFrame {
+  if (mergeMode === "single") {
+    return { x: 0.08, y: 0.065, w: 0.84, h: 0.87 };
+  }
+
+  const marginX = 0.07;
+  const marginY = 0.055;
+  const gap = 0.035;
+  const frameH = (1 - marginY * 2 - gap) / 2;
+
+  return {
+    x: marginX,
+    y: slotIndex === 0 ? marginY : marginY + frameH + gap,
+    w: 1 - marginX * 2,
+    h: frameH,
+  };
+}
+
+function getEditorBox(
+  item: ScanItem,
+  imageSize: ImageSize,
+  mergeMode: "single" | "twoUp",
+  slotIndex: number
+): EditorBox {
+  const frame = getEditorFrame(mergeMode, slotIndex);
+  const crop = item.edit.crop;
+  const cropLeft = clamp(crop.left, 0, 0.48);
+  const cropTop = clamp(crop.top, 0, 0.48);
+  const cropRight = clamp(crop.right, 0, 0.48);
+  const cropBottom = clamp(crop.bottom, 0, 0.48);
+  const sourceW = Math.max(1, imageSize.w * (1 - cropLeft - cropRight));
+  const sourceH = Math.max(1, imageSize.h * (1 - cropTop - cropBottom));
+  const pageHeightForWidthOne = 1 / A4_RATIO;
+  const sourceRatio = sourceW / sourceH;
+  const frameRatio = frame.w / (frame.h * pageHeightForWidthOne);
+  const fitByWidth = sourceRatio > frameRatio;
+
+  const baseW = fitByWidth ? frame.w : frame.h * pageHeightForWidthOne * sourceRatio;
+  const baseH = fitByWidth ? frame.w / sourceRatio / pageHeightForWidthOne : frame.h;
+  const w = baseW * item.edit.zoom;
+  const h = baseH * item.edit.zoom;
+  const centerX = frame.x + frame.w / 2 + item.edit.offsetX * frame.w;
+  const centerY = frame.y + frame.h / 2 + item.edit.offsetY * frame.h;
+
+  return {
+    x: centerX - w / 2,
+    y: centerY - h / 2,
+    w,
+    h,
+    rotation: item.edit.rotation,
+  };
+}
+
+function getBoxCorner(box: EditorBox, handle: TransformHandle, rect: DOMRect) {
+  const x = handle.includes("w") ? box.x : box.x + box.w;
+  const y = handle.includes("n") ? box.y : box.y + box.h;
+  return { x: x * rect.width, y: y * rect.height };
 }
 
 function drawPageBackground(ctx: CanvasRenderingContext2D, width: number, height: number) {
