@@ -4,123 +4,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { imagesToFullPageA4PDF, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
-
-type ScanItem = {
-  id: string;
-  name: string;
-  kind: "upload" | "camera" | "pdf-page";
-  file: Blob;
-  originalFile: Blob;
-  previewUrl: string;
-  originalPreviewUrl: string;
-  createdAt: number;
-  storagePath?: string | null;
-  expiresAt?: number | null;
-  edit: PageEdit;
-};
-
-type CollageLayout = "grid" | "story" | "strip";
-type PageFilter = "none" | "grayscale" | "bw" | "enhanced";
-
-type PageEdit = {
-  offsetX: number;
-  offsetY: number;
-  zoom: number;
-  rotation: number;
-  crop: {
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-  };
-  filter: PageFilter;
-};
-
-type ImageSize = { w: number; h: number };
-type EditorFrame = { x: number; y: number; w: number; h: number };
-type EditorBox = EditorFrame & { rotation: number };
-type TransformHandle = "nw" | "ne" | "se" | "sw";
-
-const defaultPageEdit: PageEdit = {
-  offsetX: 0,
-  offsetY: 0,
-  zoom: 1,
-  rotation: 0,
-  crop: { top: 0, right: 0, bottom: 0, left: 0 },
-  filter: "none",
-};
-
-const A4_RATIO = 595.28 / 841.89;
-
-const filterOptions: { id: PageFilter; label: string }[] = [
-  { id: "none", label: "Original" },
-  { id: "grayscale", label: "Grayscale" },
-  { id: "bw", label: "Black & white" },
-  { id: "enhanced", label: "Enhanced B/W" },
-];
-
-function EditIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v5" />
-      <path d="M14 11v5" />
-    </svg>
-  );
-}
-
-function ResetIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v6h6" />
-    </svg>
-  );
-}
-
-function CloseIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
-function RotateLeftIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 7v6h6" />
-      <path d="M20 17a8 8 0 0 0-13.7-5.7L4 13" />
-    </svg>
-  );
-}
-
-function RotateRightIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M20 7v6h-6" />
-      <path d="M4 17a8 8 0 0 1 13.7-5.7L20 13" />
-    </svg>
-  );
-}
-
-const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
-  { id: "grid", label: "Photo Grid", detail: "Best for notes and receipts" },
-  { id: "story", label: "Story Stack", detail: "Editorial vertical layout" },
-  { id: "strip", label: "Film Strip", detail: "Compact horizontal preview" },
-];
+import CameraModal from "../src/components/scanner/CameraModal";
+import ExportPanel from "../src/components/scanner/ExportPanel";
+import PdfEditorModal from "../src/components/scanner/PdfEditorModal";
+import ScanGrid from "../src/components/scanner/ScanGrid";
+import { A4_RATIO, defaultPageEdit } from "../src/components/scanner/types";
+import type { EditorBox, EditorFrame, ImageSize, MergeMode, PageEdit, PageFilter, ScanItem, TransformHandle } from "../src/components/scanner/types";
 
 export default function Home() {
   const [isClient, setIsClient] = useState(false);
@@ -130,7 +19,6 @@ export default function Home() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [collageLayout, setCollageLayout] = useState<CollageLayout>("grid");
   const [statusMessage, setStatusMessage] = useState("Ready.");
   const [supabaseReady, setSupabaseReady] = useState(false);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
@@ -138,7 +26,7 @@ export default function Home() {
   const SESSION_TTL_MS = 1000 * 60 * 30; // 30 minutes
   const isSupabaseConfigured =
     !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const [mergeMode, setMergeMode] = useState<"single" | "twoUp">("single");
+  const [mergeMode, setMergeMode] = useState<MergeMode>("single");
   const [cropOpen, setCropOpen] = useState(false);
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
@@ -679,26 +567,6 @@ export default function Home() {
     setIsCameraOpen(false);
   }
 
-  function toggleSelected(id: string) {
-    setPdfOrderIds((current) =>
-      current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id]
-    );
-  }
-
-  function movePdfOrder(id: string, delta: number) {
-    setPdfOrderIds((current) => {
-      const idx = current.indexOf(id);
-      if (idx === -1) return current;
-      const nextIdx = idx + delta;
-      if (nextIdx < 0 || nextIdx >= current.length) return current;
-      const copy = [...current];
-      const tmp = copy[idx];
-      copy[idx] = copy[nextIdx];
-      copy[nextIdx] = tmp;
-      return copy;
-    });
-  }
-
   function handlePdfDragStart(id: string) {
     if (!pdfOrderIds.includes(id)) return;
     dragPdfIdRef.current = id;
@@ -727,16 +595,40 @@ export default function Home() {
     setDragOverPdfId(null);
   }
 
-  function onCardDragStart(id: string, e: React.DragEvent<HTMLElement>) {
+  function onReorderHandlePointerDown(id: string, e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!pdfOrderIds.includes(id)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
     handlePdfDragStart(id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", id);
   }
 
-  function onCardDragOver(overId: string, e: React.DragEvent<HTMLElement>) {
+  function onReorderHandlePointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragPdfIdRef.current) return;
+
     e.preventDefault();
+    e.stopPropagation();
+
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const overCard = target?.closest<HTMLElement>("[data-pdf-card='true'][data-selected='true']");
+    const overId = overCard?.dataset.pdfId;
+
+    if (!overId) return;
     setDragOverPdfId(overId);
     handlePdfDragOver(overId);
+  }
+
+  function onReorderHandlePointerEnd(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragPdfIdRef.current) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    handlePdfDragEnd();
   }
 
   function startCropForPdfOrder() {
@@ -1042,291 +934,31 @@ export default function Home() {
           </header>
 
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="glass-panel rounded-[32px] p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Your Pages</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">Select scans</h2>
-                </div>
-                <div className="rounded-full bg-white px-3 py-1.5 text-sm text-slate-600 ring-1 ring-slate-200">
-                  {pdfOrderIds.length} pages in PDF
-                </div>
-              </div>
-
-              <div
-                className={`mt-5 grid gap-4 ${mergeMode === "twoUp" ? "grid-cols-2" : "grid-cols-1"} sm:grid-cols-2 2xl:grid-cols-3`}
-              >
-                {items.length === 0 ? (
-                  <div className="col-span-full rounded-[28px] border border-dashed border-slate-200 bg-white px-6 py-14 text-center text-slate-500">
-                    Start by importing images/PDF or opening the camera.
-                  </div>
-                ) : (
-                  displayItems.map((item) => {
-                    const selected = pdfOrderIds.includes(item.id);
-                    const pdfIndex = pdfOrderIds.indexOf(item.id);
-                    return (
-                      <article
-                        key={item.id}
-                        className={`relative overflow-hidden rounded-[28px] border bg-white shadow-sm transition ${
-                          selected
-                            ? mergeMode === "twoUp"
-                              ? pdfIndex % 2 === 0
-                                ? "border-emerald-300 shadow-emerald-100"
-                                : "border-sky-300 shadow-sky-100"
-                              : "border-emerald-300 shadow-emerald-100"
-                            : "border-white"
-                        } ${draggingPdfId === item.id ? "opacity-80" : "opacity-100"} ${
-                          dragOverPdfId === item.id ? "ring-2 ring-emerald-300" : ""
-                        }`}
-                        style={selected && mergeMode === "twoUp" ? { boxShadow: "none" } : undefined}
-                        data-pdf-card="true"
-                        data-pdf-id={item.id}
-                        data-selected={selected ? "true" : "false"}
-                        draggable={selected}
-                        onDragStart={(e) => onCardDragStart(item.id, e)}
-                        onDragOver={(e) => onCardDragOver(item.id, e)}
-                        onDragEnd={handlePdfDragEnd}
-                      >
-                        <div className="absolute left-3 top-3 z-30">
-                          {selected ? (
-                            <button
-                              type="button"
-                              aria-label="Drag to reorder"
-                              className="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-slate-950/90 text-white shadow-lg"
-                              style={{
-                                cursor: "grab",
-                                opacity: draggingPdfId === item.id ? 0.95 : 0.9,
-                                transform: draggingPdfId === item.id ? "scale(1.03)" : undefined,
-                                touchAction: "none",
-                              }}
-                            >
-                              ⠿
-                            </button>
-                          ) : null}
-                        </div>
-                        <button onClick={() => toggleSelected(item.id)} className="block w-full" type="button">
-                          <img src={item.previewUrl} alt={item.name} className="aspect-4/3 w-full object-cover" />
-                        </button>
-                        <div className="space-y-3 p-4">
-                          <div>
-                            <h3 className="truncate font-semibold text-slate-900">{item.name}</h3>
-                            {selected && mergeMode === "twoUp" ? (
-                              <div className="mt-2 flex items-center gap-2">
-                                <span
-                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                                    pdfIndex % 2 === 0
-                                      ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-                                      : "border border-sky-200 bg-sky-50 text-sky-800"
-                                  }`}
-                                >
-                                  {pdfIndex % 2 === 0 ? "Front" : "Back"}
-                                </span>
-                              </div>
-                            ) : null}
-                            <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">
-                              {item.kind === "camera" ? "Camera Scan" : item.kind === "pdf-page" ? "PDF Page" : "Imported Image"}
-                            </p>
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => startCropForOne(item.id)}
-                              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-800 transition hover:bg-emerald-100"
-                              aria-label={`Edit ${item.name}`}
-                              title="Edit image"
-                            >
-                              <EditIcon />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeItem(item.id)}
-                              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 transition hover:bg-rose-100"
-                              aria-label={`Delete ${item.name}`}
-                              title="Delete"
-                            >
-                              <TrashIcon />
-                            </button>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            <div className="glass-panel rounded-[32px] p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Export PDF</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-slate-900">Crop + merge</h2>
-                </div>
-                <div className="rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-200">
-                  {pdfOrderItems.length} pages
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-[28px] border border-slate-200 bg-white p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Merge to PDF</p>
-                    <h3 className="mt-2 text-xl font-semibold text-slate-900">A4 PDF from selected scans</h3>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <button
-                        type="button"
-                        onClick={() => setMergeMode("single")}
-                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
-                          mergeMode === "single"
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        1 per A4 page
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMergeMode("twoUp")}
-                        className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
-                          mergeMode === "twoUp"
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        2-up (front/back)
-                      </button>
-                    </div>
-                  </div>
-
-              {/* flip removed: front/back order is decided by drag order */}
-                  <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
-                    {pdfOrderItems.length} selected
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => void exportPdf()}
-                  disabled={pdfOrderItems.length === 0}
-                  className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Merge Selected to PDF
-                </button>
-
-                <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-semibold text-slate-800">
-                    Preview (first {mergeMode === "twoUp" ? "2-up pages" : "pages"})
-                  </p>
-                  {pdfOrderItems.length > 0 ? (
-                    <p className="mt-2 text-sm text-slate-500">
-                      Open a preview page to adjust image placement, crop, rotation, and scanner filters on the A4 sheet.
-                    </p>
-                  ) : null}
-                  {pdfOrderItems.length === 0 ? (
-                    <p className="mt-2 text-sm text-slate-500">Select images to preview merged A4 output.</p>
-                  ) : isGeneratingPreview ? (
-                    <p className="mt-2 text-sm text-slate-500">Rendering preview...</p>
-                ) : (
-                  <div className="mt-3 grid gap-3">
-                    {Array.from({
-                      length:
-                        mergeMode === "twoUp"
-                          ? Math.min(Math.ceil(pdfOrderItems.length / 2), 3)
-                          : Math.min(pdfOrderItems.length, 3),
-                    }).map((_, pageIdx) => {
-                      const pageNumber = pageIdx + 1;
-                      const mergedUrl = mergePreviewUrls[pageIdx] ?? null;
-
-                      const topItem =
-                        mergeMode === "twoUp" ? previewOrderedItems[pageIdx * 2] : previewOrderedItems[pageIdx];
-                      const bottomItem =
-                        mergeMode === "twoUp" ? previewOrderedItems[pageIdx * 2 + 1] : null;
-
-                      return (
-                        <div
-                          key={pageNumber}
-                          className="relative overflow-hidden rounded-xl border border-slate-200 bg-white p-2"
-                        >
-                          <div className="absolute left-2 top-2 z-10 rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white">
-                            {pageNumber}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => openPdfPageEditor(pageIdx)}
-                            className="absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-emerald-50 hover:text-emerald-700"
-                            aria-label={`Edit PDF page ${pageNumber}`}
-                            title="Edit A4 page"
-                          >
-                            <EditIcon />
-                          </button>
-
-                          <div className="sm:hidden">
-                      {mergeMode === "twoUp" ? (
-                              <div className="flex gap-2">
-                                <div className="flex-1">
-                            {topItem ? (
-                                    <img
-                                      src={topItem.previewUrl}
-                                      alt={`Front ${pageNumber}`}
-                                      className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
-                                    />
-                                  ) : (
-                                    <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
-                                  )}
-                                </div>
-                                <div className="flex-1">
-                                  {bottomItem ? (
-                                    <img
-                                      src={bottomItem.previewUrl}
-                                      alt={`Back ${pageNumber}`}
-                                      className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
-                                    />
-                                  ) : (
-                                    <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
-                                  )}
-                                </div>
-                              </div>
-                            ) : topItem ? (
-                              <img
-                                src={topItem.previewUrl}
-                                alt={`Page ${pageNumber}`}
-                                className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
-                              />
-                            ) : (
-                              <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
-                            )}
-                          </div>
-
-                          <div className="hidden sm:block">
-                            {mergedUrl ? (
-                              <img
-                                src={mergedUrl}
-                                alt={`Merged preview page ${pageNumber}`}
-                                className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-white object-cover"
-                              />
-                            ) : (
-                              <div className="aspect-[3/4] w-full rounded-lg border border-slate-200 bg-slate-50" />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                  <button
-                    type="button"
-                    onClick={() => void generateMergePreview()}
-                    disabled={pdfOrderItems.length === 0 || isGeneratingPreview}
-                    className="mt-3 inline-flex w-full items-center justify-center rounded-2xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Generate Preview
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                <p className="font-semibold text-slate-800">{isProcessing ? "Working..." : "Status"}</p>
-                <p className="mt-1 leading-6">{isProcessing ? "Processing files..." : statusMessage}</p>
-              </div>
-            </div>
+            <ScanGrid
+              items={items}
+              displayItems={displayItems}
+              pdfOrderIds={pdfOrderIds}
+              mergeMode={mergeMode}
+              draggingPdfId={draggingPdfId}
+              dragOverPdfId={dragOverPdfId}
+              onReorderHandlePointerDown={onReorderHandlePointerDown}
+              onReorderHandlePointerMove={onReorderHandlePointerMove}
+              onReorderHandlePointerEnd={onReorderHandlePointerEnd}
+              startCropForOne={startCropForOne}
+              removeItem={removeItem}
+            />
+            <ExportPanel
+              mergeMode={mergeMode}
+              setMergeMode={setMergeMode}
+              pdfOrderItems={pdfOrderItems}
+              previewOrderedItems={previewOrderedItems}
+              mergePreviewUrls={mergePreviewUrls}
+              isGeneratingPreview={isGeneratingPreview}
+              isProcessing={isProcessing}
+              statusMessage={statusMessage}
+              exportPdf={exportPdf}
+              openPdfPageEditor={openPdfPageEditor}
+            />
           </section>
         </main>
       </div>
@@ -1339,239 +971,34 @@ export default function Home() {
         onApply={handleCropApply}
       />
 
-      {pdfEditorPageIndex !== null ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 p-3 backdrop-blur-sm sm:items-center">
-          <div className="max-h-[96vh] w-full max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">A4 PDF editor</p>
-                <h2 className="mt-1 text-lg font-semibold text-slate-900">
-                  Page {pdfEditorPageIndex + 1}
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={closePdfPageEditor}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
-                aria-label="Close PDF page editor"
-                title="Close"
-              >
-                <CloseIcon />
-              </button>
-            </div>
+      <PdfEditorModal
+        open={pdfEditorPageIndex !== null}
+        pageIndex={pdfEditorPageIndex}
+        mergeMode={mergeMode}
+        pdfEditorPageRef={pdfEditorPageRef}
+        pdfEditorPreviewUrl={pdfEditorPreviewUrl}
+        isRenderingPdfEditor={isRenderingPdfEditor}
+        pdfEditorBox={pdfEditorBox}
+        pdfEditorItems={pdfEditorItems}
+        pdfEditorActiveId={pdfEditorActiveId}
+        pdfEditorActiveItem={pdfEditorActiveItem}
+        closePdfPageEditor={closePdfPageEditor}
+        setPdfEditorActiveId={setPdfEditorActiveId}
+        resetPageEdit={resetPageEdit}
+        updatePageEdit={updatePageEdit}
+        beginTransform={beginTransform}
+        handleTransformMove={handleTransformMove}
+        endTransform={endTransform}
+      />
 
-            <div className="grid max-h-[calc(96vh-68px)] overflow-y-auto lg:grid-cols-[minmax(0,1fr)_340px]">
-              <div className="bg-slate-100 p-4 sm:p-6">
-                <div className="mx-auto max-w-[520px]">
-                  <div
-                    ref={pdfEditorPageRef}
-                    className="relative aspect-[595/842] overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200"
-                    onPointerMove={handleTransformMove}
-                    onPointerUp={endTransform}
-                    onPointerCancel={endTransform}
-                  >
-                    {pdfEditorPreviewUrl ? (
-                      <img
-                        src={pdfEditorPreviewUrl}
-                        alt={`PDF page ${pdfEditorPageIndex + 1} preview`}
-                        className="h-full w-full object-contain"
-                      />
-                    ) : (
-                      <div className="grid h-full place-items-center text-sm text-slate-500">
-                        Rendering A4 page...
-                      </div>
-                    )}
-                    {isRenderingPdfEditor ? (
-                      <div className="absolute right-3 top-3 rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">
-                        Updating
-                      </div>
-                    ) : null}
-                    {pdfEditorBox ? (
-                      <div
-                        className="absolute z-20 cursor-move border-2 border-emerald-400 bg-emerald-300/10 shadow-[0_0_0_999px_rgba(15,23,42,0.06)]"
-                        style={{
-                          left: `${pdfEditorBox.x * 100}%`,
-                          top: `${pdfEditorBox.y * 100}%`,
-                          width: `${pdfEditorBox.w * 100}%`,
-                          height: `${pdfEditorBox.h * 100}%`,
-                          transform: `rotate(${pdfEditorBox.rotation}deg)`,
-                          transformOrigin: "center",
-                          touchAction: "none",
-                        }}
-                        onPointerDown={(e) => beginTransform(e, "move")}
-                        role="application"
-                        aria-label="Selected image transform frame"
-                      >
-                        {(["nw", "ne", "se", "sw"] as const).map((handle) => (
-                          <div
-                            key={handle}
-                            className={`absolute h-5 w-5 rounded-md border-2 border-white bg-emerald-500 shadow-lg ${
-                              handle === "nw"
-                                ? "-left-2.5 -top-2.5 cursor-nwse-resize"
-                                : handle === "ne"
-                                  ? "-right-2.5 -top-2.5 cursor-nesw-resize"
-                                  : handle === "se"
-                                    ? "-bottom-2.5 -right-2.5 cursor-nwse-resize"
-                                    : "-bottom-2.5 -left-2.5 cursor-nesw-resize"
-                            }`}
-                            onPointerDown={(e) => beginTransform(e, "resize", handle)}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-4 p-4 sm:p-5">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Image slot</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    {pdfEditorItems.map((item, index) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => setPdfEditorActiveId(item.id)}
-                        className={`rounded-2xl border px-3 py-2 text-left text-sm font-semibold transition ${
-                          pdfEditorActiveId === item.id
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        <span className="block text-xs uppercase tracking-[0.18em] text-slate-400">
-                          {mergeMode === "twoUp" ? (index === 0 ? "Top" : "Bottom") : "Page"}
-                        </span>
-                        <span className="mt-1 block truncate">{item.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {pdfEditorActiveItem ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Adjust</p>
-                        <h3 className="mt-1 truncate text-base font-semibold text-slate-900">
-                          {pdfEditorActiveItem.name}
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => resetPageEdit(pdfEditorActiveItem.id)}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        aria-label="Reset selected image placement"
-                        title="Reset"
-                      >
-                        <ResetIcon />
-                      </button>
-                    </div>
-
-                    <div className="mt-4 grid gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Rotate</p>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updatePageEdit(pdfEditorActiveItem.id, {
-                                rotation: pdfEditorActiveItem.edit.rotation - 90,
-                              })
-                            }
-                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            <RotateLeftIcon />
-                            Left
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updatePageEdit(pdfEditorActiveItem.id, {
-                                rotation: pdfEditorActiveItem.edit.rotation + 90,
-                              })
-                            }
-                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            <RotateRightIcon />
-                            Right
-                          </button>
-                        </div>
-                      </div>
-                      <label className="grid gap-1 text-xs font-semibold text-slate-700">
-                        Filter
-                        <select
-                          value={pdfEditorActiveItem.edit.filter}
-                          onChange={(e) =>
-                            updatePageEdit(pdfEditorActiveItem.id, { filter: e.target.value as PageFilter })
-                          }
-                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                        >
-                          {filterOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={closePdfPageEditor}
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-600"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {isCameraOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-4xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Live Scanner</p>
-                <h2 className="mt-1 text-xl font-semibold text-slate-900">Camera permission powered capture</h2>
-              </div>
-              <button onClick={closeCamera} className="rounded-full bg-slate-100 px-3 py-1.5 text-sm text-slate-600">
-                Close
-              </button>
-            </div>
-
-            <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_280px]">
-              <div className="bg-slate-950 p-4">
-                <div className="relative overflow-hidden rounded-[28px] border border-white/10 bg-slate-900">
-                  <video ref={videoRef} muted playsInline className="aspect-video w-full object-cover" />
-                  <div className="pointer-events-none absolute inset-0 m-8 rounded-[32px] border-2 border-dashed border-emerald-300/80" />
-                </div>
-              </div>
-              <div className="space-y-4 p-5">
-                <div className="rounded-[24px] bg-slate-50 p-4 text-sm text-slate-600">
-                  {cameraError ? cameraError : "On mobile, this opens the rear camera when supported. On desktop, use your webcam to capture documents."}
-                </div>
-                <button
-                  onClick={() => void captureFrame()}
-                  disabled={!cameraReady}
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-4 py-3 font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Capture Document
-                </button>
-                <button
-                  onClick={closeCamera}
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-white px-4 py-3 font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                >
-                  Finish
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <CameraModal
+        open={isCameraOpen}
+        videoRef={videoRef}
+        cameraError={cameraError}
+        cameraReady={cameraReady}
+        captureFrame={captureFrame}
+        closeCamera={closeCamera}
+      />
         </>
       ) : null}
     </div>
@@ -1809,74 +1236,6 @@ function blobToDataUrl(blob: Blob) {
   });
 }
 
-async function renderCollage(items: ScanItem[], layout: CollageLayout) {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("Canvas not supported");
-  }
-
-  const effectiveLayout: CollageLayout = layout === "story" && items.length > 4 ? "grid" : layout;
-  const images = await Promise.all(items.map((item) => loadImage(item.previewUrl)));
-
-  if (effectiveLayout === "strip") {
-    canvas.width = 1800;
-    canvas.height = 600;
-    context.fillStyle = "#f4f7fb";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const gap = 28;
-    const width = (canvas.width - gap * (images.length + 1)) / images.length;
-    images.forEach((image, index) => {
-      const x = gap + index * (width + gap);
-      drawCoverImage(context, image, x, 28, width, canvas.height - 56);
-    });
-
-    return canvas;
-  }
-
-  if (effectiveLayout === "story") {
-    canvas.width = 1080;
-    canvas.height = 1600;
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const heights = [620, 400, 400];
-    if (!images[0]) return canvas;
-    drawCoverImage(context, images[0], 32, 32, canvas.width - 64, heights[0]);
-
-    const lowerImages = images.slice(1, 3);
-    lowerImages.forEach((image, index) => {
-      drawCoverImage(context, image, 32 + index * 508, 684, 476, heights[1]);
-    });
-
-    if (images[3]) {
-      drawCoverImage(context, images[3], 32, 1116, canvas.width - 64, heights[2]);
-    }
-
-    return canvas;
-  }
-
-  canvas.width = 1400;
-  context.fillStyle = "#ffffff";
-
-  const gap = 28;
-  const cell = (canvas.width - gap * 3) / 2;
-  const rows = Math.max(1, Math.ceil(images.length / 2));
-  const height = gap + rows * cell + (rows - 1) * gap;
-  canvas.height = height;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  images.forEach((image, index) => {
-    const x = gap + (index % 2) * (cell + gap);
-    const y = gap + Math.floor(index / 2) * (cell + gap);
-    drawCoverImage(context, image, x, y, cell, cell);
-  });
-
-  return canvas;
-}
-
 function loadImage(src: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -1886,34 +1245,3 @@ function loadImage(src: string) {
   });
 }
 
-function drawCoverImage(
-  context: CanvasRenderingContext2D,
-  image: HTMLImageElement,
-  x: number,
-  y: number,
-  width: number,
-  height: number
-) {
-  const imageRatio = image.width / image.height;
-  const frameRatio = width / height;
-
-  let drawWidth = width;
-  let drawHeight = height;
-  let offsetX = x;
-  let offsetY = y;
-
-  if (imageRatio > frameRatio) {
-    drawWidth = height * imageRatio;
-    offsetX = x - (drawWidth - width) / 2;
-  } else {
-    drawHeight = width / imageRatio;
-    offsetY = y - (drawHeight - height) / 2;
-  }
-
-  context.save();
-  context.beginPath();
-  context.roundRect(x, y, width, height, 26);
-  context.clip();
-  context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-  context.restore();
-}
