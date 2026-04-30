@@ -1069,18 +1069,16 @@ export default function Home() {
 
       <div className="mx-auto max-w-7xl">
         <main className="space-y-5">
-          <header className="panel p-4 sm:p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <header className="panel overflow-hidden">
+            <div className="flex flex-col gap-4 border-b border-slate-200 bg-white p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Workspace</p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">FreeScanner</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Build editable scan PDFs or combine existing PDF files in one focused workspace.
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Document Workspace</p>
+                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">FreeScanner</h1>
+                <p className="mt-1 text-sm text-slate-500">Ready for the next document.</p>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+                <div className="inline-grid grid-cols-2 rounded-lg border border-slate-200 bg-slate-100 p-1">
                   <button
                     type="button"
                     onClick={() => setWorkspaceMode("scan")}
@@ -1101,34 +1099,20 @@ export default function Home() {
                   </button>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  {workspaceMode === "scan" ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-                      >
-                        Import scans
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleCameraOpen()}
-                        className="rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-                      >
-                        Camera
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => pdfInputRef.current?.click()}
-                      className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-                    >
-                      Add PDFs
-                    </button>
-                  )}
-                </div>
+              </div>
+            </div>
+            <div className="grid gap-3 bg-slate-50/70 p-4 text-sm sm:grid-cols-3 sm:p-5">
+              <div>
+                <p className="font-semibold text-slate-950">{workspaceMode === "scan" ? "Scan workspace" : "PDF merge workspace"}</p>
+                <p className="mt-1 text-slate-500">{workspaceMode === "scan" ? `${items.length} pages loaded` : `${pdfFiles.length} PDFs loaded`}</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-950">Selection</p>
+                <p className="mt-1 text-slate-500">{workspaceMode === "scan" ? `${pdfOrderIds.length} pages in PDF` : `${pdfFiles.length} files in order`}</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-950">Status</p>
+                <p className="mt-1 truncate text-slate-500">{isProcessing ? "Working..." : statusMessage}</p>
               </div>
             </div>
           </header>
@@ -1147,6 +1131,9 @@ export default function Home() {
                 onReorderHandlePointerEnd={onReorderHandlePointerEnd}
                 startCropForOne={startCropForOne}
                 removeItem={removeItem}
+                onImportScans={() => fileInputRef.current?.click()}
+                onOpenCamera={() => void handleCameraOpen()}
+                isProcessing={isProcessing}
               />
               <ExportPanel
                 mergeMode={mergeMode}
