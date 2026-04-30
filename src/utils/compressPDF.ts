@@ -85,8 +85,9 @@ async function buildPdfFromRasterizedPages(
   }
 
   const outputBytes = await pdfDoc.save();
-  const normalizedBytes = Uint8Array.from(outputBytes);
-  return new Blob([normalizedBytes], { type: "application/pdf" });
+  const copiedBytes = new Uint8Array(outputBytes.length);
+  copiedBytes.set(outputBytes);
+  return new Blob([copiedBytes.buffer], { type: "application/pdf" });
 }
 
 export async function compressPdfFile(file: File, options: CompressPdfOptions): Promise<CompressPdfResult> {
