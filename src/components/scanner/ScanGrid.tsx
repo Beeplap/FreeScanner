@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useLayoutEffect, useRef } from "react";
 import { EditIcon, HandIcon, TrashIcon } from "./icons";
 import type { MergeMode, ScanItem } from "./types";
 
@@ -10,9 +11,9 @@ type Props = {
   mergeMode: MergeMode;
   draggingPdfId: string | null;
   dragOverPdfId: string | null;
-  onReorderHandlePointerDown: (id: string, e: React.PointerEvent<HTMLButtonElement>) => void;
-  onReorderHandlePointerMove: (e: React.PointerEvent<HTMLButtonElement>) => void;
-  onReorderHandlePointerEnd: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onReorderHandlePointerDown: (id: string, e: React.PointerEvent<HTMLElement>) => void;
+  onReorderHandlePointerMove: (e: React.PointerEvent<HTMLElement>) => void;
+  onReorderHandlePointerEnd: (e: React.PointerEvent<HTMLElement>) => void;
   startCropForOne: (id: string) => void;
   removeItem: (id: string) => void;
 };
@@ -30,6 +31,58 @@ export default function ScanGrid({
   startCropForOne,
   removeItem,
 }: Props) {
+  const cardRefs = useRef(new Map<string, HTMLElement>());
+  const previousRectsRef = useRef(new Map<string, DOMRect>());
+  const orderKey = displayItems.map((item) => item.id).join("|");
+
+  useLayoutEffect(() => {
+    const previousRects = previousRectsRef.current;
+    const nextRects = new Map<string, DOMRect>();
+
+    cardRefs.current.forEach((element, id) => {
+      const nextRect = element.getBoundingClientRect();
+      nextRects.set(id, nextRect);
+
+      const previousRect = previousRects.get(id);
+      if (!previousRect) return;
+
+      const deltaX = previousRect.left - nextRect.left;
+      const deltaY = previousRect.top - nextRect.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+
+      element.getAnimations().forEach((animation) => animation.cancel());
+      element.animate(
+        [
+          { transform: `translate(${deltaX}px, ${deltaY}px)` },
+          { transform: "translate(0, 0)" },
+        ],
+        {
+          duration: 190,
+          easing: "cubic-bezier(0.2, 0, 0, 1)",
+        }
+      );
+    });
+
+    previousRectsRef.current = nextRects;
+  }, [orderKey, draggingPdfId]);
+
+  function setCardRef(id: string, element: HTMLElement | null) {
+    if (element) {
+      cardRefs.current.set(id, element);
+    } else {
+      cardRefs.current.delete(id);
+    }
+  }
+
+  function handleDesktopCardPointerDown(itemId: string, selected: boolean, e: React.PointerEvent<HTMLElement>) {
+    if (!selected) return;
+    if (e.pointerType !== "mouse" && e.pointerType !== "pen") return;
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button")) return;
+
+    onReorderHandlePointerDown(itemId, e);
+  }
+
   return (
     <div className="panel p-5">
       <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -52,7 +105,12 @@ export default function ScanGrid({
             return (
               <article
                 key={item.id}
-                className={`relative overflow-hidden rounded-lg border bg-white shadow-sm transition ${
+                ref={(element) => setCardRef(item.id, element)}
+                onPointerDown={(e) => handleDesktopCardPointerDown(item.id, selected, e)}
+                onPointerMove={onReorderHandlePointerMove}
+                onPointerUp={onReorderHandlePointerEnd}
+                onPointerCancel={onReorderHandlePointerEnd}
+                className={`relative overflow-hidden rounded-lg border bg-white shadow-sm transition-colors duration-150 ${
                   selected
                     ? mergeMode === "twoUp"
                       ? pdfIndex % 2 === 0
@@ -60,7 +118,9 @@ export default function ScanGrid({
                         : "border-sky-300 shadow-sky-100"
                       : "border-emerald-300 shadow-emerald-100"
                     : "border-white"
-                } ${draggingPdfId === item.id ? "opacity-80" : "opacity-100"} ${dragOverPdfId === item.id ? "ring-2 ring-emerald-300" : ""}`}
+                } ${selected ? "sm:cursor-grab sm:active:cursor-grabbing" : ""} ${
+                  draggingPdfId === item.id ? "z-10 opacity-80 shadow-lg ring-2 ring-slate-300" : "opacity-100"
+                } ${dragOverPdfId === item.id ? "ring-2 ring-emerald-300" : ""}`}
                 style={selected && mergeMode === "twoUp" ? { boxShadow: "none" } : undefined}
                 data-pdf-card="true"
                 data-pdf-id={item.id}
@@ -72,7 +132,7 @@ export default function ScanGrid({
                       type="button"
                       aria-label="Drag to reorder image"
                       title="Drag to reorder"
-                      className="grid h-10 w-10 place-items-center rounded-lg border border-white/20 bg-slate-950/90 text-white shadow-lg"
+                      className="grid h-10 w-10 place-items-center rounded-lg border border-white/20 bg-slate-950/90 text-white shadow-lg sm:hidden"
                       style={{
                         cursor: draggingPdfId === item.id ? "grabbing" : "grab",
                         opacity: draggingPdfId === item.id ? 0.95 : 0.9,

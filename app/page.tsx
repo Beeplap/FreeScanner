@@ -738,7 +738,7 @@ export default function Home() {
     setDragOverPdfId(null);
   }
 
-  function onReorderHandlePointerDown(id: string, e: React.PointerEvent<HTMLButtonElement>) {
+  function onReorderHandlePointerDown(id: string, e: React.PointerEvent<HTMLElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     if (!pdfOrderIds.includes(id)) return;
 
@@ -748,7 +748,7 @@ export default function Home() {
     handlePdfDragStart(id);
   }
 
-  function onReorderHandlePointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+  function onReorderHandlePointerMove(e: React.PointerEvent<HTMLElement>) {
     if (!dragPdfIdRef.current) return;
 
     e.preventDefault();
@@ -763,7 +763,7 @@ export default function Home() {
     handlePdfDragOver(overId);
   }
 
-  function onReorderHandlePointerEnd(e: React.PointerEvent<HTMLButtonElement>) {
+  function onReorderHandlePointerEnd(e: React.PointerEvent<HTMLElement>) {
     if (!dragPdfIdRef.current) return;
 
     e.preventDefault();
