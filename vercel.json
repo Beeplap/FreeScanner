@@ -2,8 +2,7 @@
   "crons": [
     {
       "path": "/api/cleanup-scans",
-      "schedule": "0 * * * *"
+      "schedule": "0 1 * * *"
     }
   ]
 }
-
