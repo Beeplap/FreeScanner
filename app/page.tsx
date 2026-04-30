@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getPdfPageCount, imagesToFullPageA4PDF, mergePdfFiles, pdfToImages } from "../src/utils/pdfUtils";
+import { getPdfFirstPagePreview, getPdfPageCount, imagesToFullPageA4PDF, mergePdfFiles, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 import CameraModal from "../src/components/scanner/CameraModal";
@@ -47,6 +47,7 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const itemsRef = useRef<ScanItem[]>([]);
+  const pdfFilesRef = useRef<PdfMergeItem[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
   const dragPdfIdRef = useRef<string | null>(null);
@@ -113,6 +114,35 @@ export default function Home() {
   }, [items]);
 
   useEffect(() => {
+    pdfFilesRef.current = pdfFiles;
+  }, [pdfFiles]);
+
+  useEffect(() => {
+    const missingPreview = pdfFiles.find((item) => !item.previewUrl && !item.previewFailed);
+    if (!missingPreview) return;
+
+    let cancelled = false;
+    void getPdfFirstPagePreview(missingPreview.file)
+      .then((blob) => {
+        if (cancelled) return;
+        const previewUrl = URL.createObjectURL(blob);
+        setPdfFiles((current) =>
+          current.map((item) => (item.id === missingPreview.id ? { ...item, previewUrl, previewFailed: false } : item))
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPdfFiles((current) =>
+          current.map((item) => (item.id === missingPreview.id ? { ...item, previewFailed: true } : item))
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfFiles]);
+
+  useEffect(() => {
     if (!isSupabaseConfigured) return;
     try {
       const existing = sessionStorage.getItem("freescanner_session_id");
@@ -162,6 +192,9 @@ export default function Home() {
         }
       });
       stopCamera();
+      pdfFilesRef.current.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
     };
   }, []);
 
@@ -519,14 +552,23 @@ export default function Home() {
 
     try {
       const nextItems = await Promise.all(
-        files.map(async (file) => ({
-          id: crypto.randomUUID(),
-          file,
-          name: file.name,
-          size: file.size,
-          pageCount: await getPdfPageCount(file).catch(() => null),
-          createdAt: Date.now(),
-        }))
+        files.map(async (file) => {
+          const [pageCount, previewBlob] = await Promise.all([
+            getPdfPageCount(file).catch(() => null),
+            getPdfFirstPagePreview(file).catch(() => null),
+          ]);
+
+          return {
+            id: crypto.randomUUID(),
+            file,
+            name: file.name,
+            size: file.size,
+            pageCount,
+            previewUrl: previewBlob ? URL.createObjectURL(previewBlob) : null,
+            previewFailed: false,
+            createdAt: Date.now(),
+          };
+        })
       );
 
       setPdfFiles((current) => [...current, ...nextItems]);
@@ -539,7 +581,24 @@ export default function Home() {
   }
 
   function removePdfFile(id: string) {
-    setPdfFiles((current) => current.filter((item) => item.id !== id));
+    setPdfFiles((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  }
+
+  function reorderPdfFile(id: string, overId: string) {
+    setPdfFiles((current) => {
+      const from = current.findIndex((item) => item.id === id);
+      const to = current.findIndex((item) => item.id === overId);
+      if (from === -1 || to === -1 || from === to) return current;
+
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
   }
 
   function movePdfFile(id: string, direction: -1 | 1) {
@@ -1101,6 +1160,7 @@ export default function Home() {
               onMergePdfs={exportMergedPdfs}
               onRemovePdf={removePdfFile}
               onMovePdf={movePdfFile}
+              onReorderPdf={reorderPdfFile}
             />
           )}
         </main>

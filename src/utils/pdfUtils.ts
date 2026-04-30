@@ -5,9 +5,50 @@
 import { PDFDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
+const pdfWorkerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
+
+function ensurePdfWorker() {
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+  }
+}
+
 export async function getPdfPageCount(file: File): Promise<number> {
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   return pdf.getPageCount();
+}
+
+export async function getPdfFirstPagePreview(file: File): Promise<Blob> {
+  ensurePdfWorker();
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    isOffscreenCanvasSupported: false,
+  });
+  const pdf = await loadingTask.promise;
+  try {
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 0.8 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((value) => {
+        if (!value) {
+          reject(new Error("Failed to render PDF preview"));
+          return;
+        }
+        resolve(value);
+      }, "image/png")
+    );
+    canvas.remove();
+    return blob;
+  } finally {
+    await pdf.destroy?.();
+  }
 }
 
 export async function mergePdfFiles(files: File[]): Promise<Uint8Array> {
@@ -117,8 +158,12 @@ export async function imagesToA4TwoUpPDF(images: Blob[]): Promise<Uint8Array> {
 }
 
 export async function pdfToImages(file: File): Promise<Blob[]> {
+  ensurePdfWorker();
   const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(arrayBuffer),
+    isOffscreenCanvasSupported: false,
+  });
   const pdf = await loadingTask.promise;
   const result: Blob[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {

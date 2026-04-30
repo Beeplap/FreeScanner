@@ -36,6 +36,8 @@ export type PdfMergeItem = {
   name: string;
   size: number;
   pageCount: number | null;
+  previewUrl: string | null;
+  previewFailed?: boolean;
   createdAt: number;
 };
 

@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { HandIcon, TrashIcon } from "./icons";
 import type { PdfMergeItem } from "./types";
 
@@ -10,6 +11,7 @@ type Props = {
   onMergePdfs: () => void | Promise<void>;
   onRemovePdf: (id: string) => void;
   onMovePdf: (id: string, direction: -1 | 1) => void;
+  onReorderPdf: (id: string, overId: string) => void;
 };
 
 function formatFileSize(bytes: number) {
@@ -24,8 +26,52 @@ export default function PdfMergePanel({
   onMergePdfs,
   onRemovePdf,
   onMovePdf,
+  onReorderPdf,
 }: Props) {
   const totalPages = pdfFiles.reduce((sum, item) => sum + (item.pageCount ?? 0), 0);
+  const dragPdfIdRef = React.useRef<string | null>(null);
+  const [draggingPdfId, setDraggingPdfId] = React.useState<string | null>(null);
+  const [dragOverPdfId, setDragOverPdfId] = React.useState<string | null>(null);
+
+  function startDrag(id: string, e: React.PointerEvent<HTMLButtonElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragPdfIdRef.current = id;
+    setDraggingPdfId(id);
+    setDragOverPdfId(id);
+  }
+
+  function moveDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    const draggedId = dragPdfIdRef.current;
+    if (!draggedId) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const overCard = target?.closest<HTMLElement>("[data-merge-pdf-card='true']");
+    const overId = overCard?.dataset.mergePdfId;
+    if (!overId || overId === draggedId) return;
+
+    setDragOverPdfId(overId);
+    onReorderPdf(draggedId, overId);
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!dragPdfIdRef.current) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragPdfIdRef.current = null;
+    setDraggingPdfId(null);
+    setDragOverPdfId(null);
+  }
 
   return (
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -57,53 +103,81 @@ export default function PdfMergePanel({
               </span>
             </button>
           ) : (
-            <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {pdfFiles.map((item, index) => (
-                <div key={item.id} className="grid gap-3 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-sm font-semibold text-slate-700">
-                    {index + 1}
+                <article
+                  key={item.id}
+                  data-merge-pdf-card="true"
+                  data-merge-pdf-id={item.id}
+                  className={`overflow-hidden rounded-lg border bg-white shadow-sm transition ${
+                    dragOverPdfId === item.id ? "border-emerald-400 ring-2 ring-emerald-100" : "border-slate-200"
+                  } ${draggingPdfId === item.id ? "opacity-75" : ""}`}
+                >
+                  <div className="relative bg-slate-100">
+                    <div className="absolute left-2 top-2 z-10 rounded-md bg-slate-950 px-2 py-1 text-xs font-semibold text-white">
+                      PDF {index + 1}
+                    </div>
+                    <button
+                      type="button"
+                      onPointerDown={(e) => startDrag(item.id, e)}
+                      onPointerMove={moveDrag}
+                      onPointerUp={endDrag}
+                      onPointerCancel={endDrag}
+                      className="absolute right-2 top-2 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200"
+                      style={{ cursor: draggingPdfId === item.id ? "grabbing" : "grab", touchAction: "none" }}
+                      aria-label={`Drag ${item.name} to reorder`}
+                      title="Drag to reorder"
+                    >
+                      <HandIcon />
+                    </button>
+                    {item.previewUrl ? (
+                      <img src={item.previewUrl} alt={`First page preview of ${item.name}`} className="aspect-[4/5] w-full bg-white object-contain p-3" />
+                    ) : item.previewFailed ? (
+                      <div className="grid aspect-[4/5] w-full place-items-center p-6 text-center text-sm text-slate-500">
+                        Preview unavailable
+                      </div>
+                    ) : (
+                      <div className="grid aspect-[4/5] w-full place-items-center p-6 text-center text-sm text-slate-500">
+                        Rendering preview...
+                      </div>
+                    )}
                   </div>
-                  <div className="min-w-0">
+                  <div className="space-y-3 p-4">
+                    <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold text-slate-950">{item.name}</h3>
                     <p className="mt-1 text-xs text-slate-500">
                       {item.pageCount === null ? "Reading pages" : `${item.pageCount} page${item.pageCount === 1 ? "" : "s"}`} / {formatFileSize(item.size)}
                     </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onMovePdf(item.id, -1)}
+                        disabled={index === 0}
+                        className="inline-flex h-9 flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Up
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onMovePdf(item.id, 1)}
+                        disabled={index === pdfFiles.length - 1}
+                        className="inline-flex h-9 flex-1 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Down
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemovePdf(item.id)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-700 transition hover:bg-rose-100"
+                        aria-label={`Remove ${item.name}`}
+                        title="Remove"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onMovePdf(item.id, -1)}
-                      disabled={index === 0}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={`Move ${item.name} up`}
-                      title="Move up"
-                    >
-                      Up
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onMovePdf(item.id, 1)}
-                      disabled={index === pdfFiles.length - 1}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={`Move ${item.name} down`}
-                      title="Move down"
-                    >
-                      Down
-                    </button>
-                    <span className="hidden h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-400 sm:inline-flex" title="Order controls">
-                      <HandIcon />
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => onRemovePdf(item.id)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-rose-50 text-rose-700 transition hover:bg-rose-100"
-                      aria-label={`Remove ${item.name}`}
-                      title="Remove"
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
