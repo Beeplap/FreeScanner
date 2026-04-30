@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPdfFirstPagePreview, getPdfPageCount, imagesToFullPageA4PDF, mergePdfFiles, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 import CameraModal from "../src/components/scanner/CameraModal";
+import CompressorPanel from "../src/components/scanner/CompressorPanel";
 import ExportPanel from "../src/components/scanner/ExportPanel";
 import PdfMergePanel from "../src/components/scanner/PdfMergePanel";
 import PdfEditorModal from "../src/components/scanner/PdfEditorModal";
@@ -12,10 +13,9 @@ import ScanGrid from "../src/components/scanner/ScanGrid";
 import { A4_RATIO, defaultPageEdit } from "../src/components/scanner/types";
 import type { EditorBox, EditorFrame, ImageSize, MergeMode, PageEdit, PageFilter, PdfMergeItem, ScanItem, TransformHandle } from "../src/components/scanner/types";
 
-type WorkspaceMode = "scan" | "pdf";
+type WorkspaceMode = "scan" | "pdf" | "compress";
 
 export default function Home() {
-  const [isClient, setIsClient] = useState(false);
   const [items, setItems] = useState<ScanItem[]>([]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("scan");
   const [pdfFiles, setPdfFiles] = useState<PdfMergeItem[]>([]);
@@ -64,6 +64,7 @@ export default function Home() {
   } | null>(null);
   const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
+  const isClient = typeof window !== "undefined";
 
   const pdfOrderItems = useMemo(() => {
     const byId = new Map(items.map((it) => [it.id, it]));
@@ -104,10 +105,6 @@ export default function Home() {
     if (!pdfEditorActiveItem || !pdfEditorActiveSize || pdfEditorActiveIndex < 0) return null;
     return getEditorBox(pdfEditorActiveItem, pdfEditorActiveSize, mergeMode, pdfEditorActiveIndex);
   }, [mergeMode, pdfEditorActiveIndex, pdfEditorActiveItem, pdfEditorActiveSize]);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -198,6 +195,36 @@ export default function Home() {
     };
   }, []);
 
+  const cleanupSessionBestEffort = useCallback(async () => {
+    const userId = supabaseUserIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return;
+
+    try {
+      const { data: rows } = await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .select("storage_path")
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+
+      const paths =
+        (rows ?? [])
+          .map((r: { storage_path: string | null }) => r.storage_path)
+          .filter((p): p is string => typeof p === "string" && p.length > 0);
+
+      if (paths.length > 0) {
+        await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove(paths);
+      }
+
+      await supabase
+        .from(SUPABASE_SCAN_PAGES_TABLE)
+        .delete()
+        .eq("user_id", userId)
+        .eq("session_id", sessionId);
+    } catch {
+    }
+  }, [isSupabaseConfigured, supabaseReady]);
+
   useEffect(() => {
     if (!isSupabaseConfigured || !supabaseReady) return;
 
@@ -211,7 +238,34 @@ export default function Home() {
       window.removeEventListener("pagehide", handler);
       window.removeEventListener("beforeunload", handler);
     };
-  }, [isSupabaseConfigured, supabaseReady]);
+  }, [cleanupSessionBestEffort, isSupabaseConfigured, supabaseReady]);
+
+  const generateMergePreview = useCallback(async () => {
+    if (pdfOrderItems.length === 0) {
+      setMergePreviewUrls([]);
+      return;
+    }
+
+    const runToken = Symbol("preview");
+    previewTokenRef.current = runToken;
+
+    setIsGeneratingPreview(true);
+    try {
+      const previewItems =
+        mergeMode === "single"
+          ? pdfOrderItems.slice(0, 4)
+          : pdfOrderItems.slice(0, Math.min(pdfOrderItems.length, 8));
+      const renderedPages = await renderEditedPdfPages(previewItems, mergeMode, 900);
+      if (previewTokenRef.current !== runToken) return;
+      const previews = await Promise.all(renderedPages.map((page) => blobToDataUrl(page)));
+
+      setMergePreviewUrls(previews);
+    } catch {
+      setMergePreviewUrls([]);
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  }, [mergeMode, pdfOrderItems]);
 
   useEffect(() => {
     if (pdfOrderIds.length === 0) {
@@ -224,18 +278,18 @@ export default function Home() {
     }, 250);
 
     return () => window.clearTimeout(timeout);
-  }, [items, pdfOrderIds, mergeMode]);
+  }, [generateMergePreview, items, mergeMode, pdfOrderIds]);
 
   useEffect(() => {
     if (pdfEditorPageIndex === null || pdfEditorItems.length === 0) {
-      setPdfEditorPreviewUrl(null);
-      return;
+      const timeout = window.setTimeout(() => setPdfEditorPreviewUrl(null), 0);
+      return () => window.clearTimeout(timeout);
     }
 
     const runToken = Symbol("pdf-editor");
     pdfEditorTokenRef.current = runToken;
     let nextUrl: string | null = null;
-    setIsRenderingPdfEditor(true);
+    const startTimeout = window.setTimeout(() => setIsRenderingPdfEditor(true), 0);
 
     void renderEditedPdfPages(pdfEditorItems, mergeMode, 900)
       .then(async (pages) => {
@@ -252,17 +306,26 @@ export default function Home() {
           setIsRenderingPdfEditor(false);
         }
       });
+
+    return () => {
+      window.clearTimeout(startTimeout);
+    };
   }, [pdfEditorItems, mergeMode, pdfEditorPageIndex]);
 
   useEffect(() => {
     if (pdfEditorPageIndex === null) return;
     if (pdfEditorItems.length === 0) {
-      setPdfEditorPageIndex(null);
-      setPdfEditorActiveId(null);
-      return;
+      const timeout = window.setTimeout(() => {
+        setPdfEditorPageIndex(null);
+        setPdfEditorActiveId(null);
+      }, 0);
+      return () => window.clearTimeout(timeout);
     }
     if (!pdfEditorActiveId || !pdfEditorItems.some((item) => item.id === pdfEditorActiveId)) {
-      setPdfEditorActiveId(pdfEditorItems[0].id);
+      const timeout = window.setTimeout(() => {
+        setPdfEditorActiveId(pdfEditorItems[0].id);
+      }, 0);
+      return () => window.clearTimeout(timeout);
     }
   }, [pdfEditorActiveId, pdfEditorItems, pdfEditorPageIndex]);
 
@@ -334,7 +397,7 @@ export default function Home() {
         name: params.name,
         created_at: new Date().toISOString(),
         expires_at: new Date(expiresAt).toISOString(),
-      } as any);
+      });
 
       if (insertError) {
         // Avoid orphan objects if metadata insert fails.
@@ -372,7 +435,7 @@ export default function Home() {
           name: item.name,
           kind: item.kind,
           expires_at: new Date(expiresAt).toISOString(),
-        } as any)
+        })
         .eq("id", item.id)
         .eq("user_id", userId)
         .eq("session_id", sessionId);
@@ -388,7 +451,7 @@ export default function Home() {
           name: item.name,
           created_at: new Date().toISOString(),
           expires_at: new Date(expiresAt).toISOString(),
-        } as any);
+        });
 
         if (insertError) throw insertError;
       }
@@ -426,36 +489,6 @@ export default function Home() {
         .eq("session_id", sessionId);
     } catch {
       // best-effort
-    }
-  }
-
-  async function cleanupSessionBestEffort() {
-    const userId = supabaseUserIdRef.current;
-    const sessionId = sessionIdRef.current;
-    if (!isSupabaseConfigured || !supabaseReady || !userId || !sessionId) return;
-
-    try {
-      const { data: rows } = await supabase
-        .from(SUPABASE_SCAN_PAGES_TABLE)
-        .select("storage_path")
-        .eq("user_id", userId)
-        .eq("session_id", sessionId);
-
-      const paths =
-        rows
-          ?.map((r: any) => r.storage_path)
-          .filter((p: any) => typeof p === "string" && p.length > 0) ?? [];
-
-      if (paths.length > 0) {
-        await supabase.storage.from(SUPABASE_SCANS_BUCKET).remove(paths);
-      }
-
-      await supabase
-        .from(SUPABASE_SCAN_PAGES_TABLE)
-        .delete()
-        .eq("user_id", userId)
-        .eq("session_id", sessionId);
-    } catch {
     }
   }
 
@@ -995,33 +1028,6 @@ export default function Home() {
   }
 
 
-  async function generateMergePreview() {
-    if (pdfOrderItems.length === 0) {
-      setMergePreviewUrls([]);
-      return;
-    }
-
-    const runToken = Symbol("preview");
-    previewTokenRef.current = runToken;
-
-    setIsGeneratingPreview(true);
-    try {
-      const previewItems =
-        mergeMode === "single"
-          ? pdfOrderItems.slice(0, 4)
-          : pdfOrderItems.slice(0, Math.min(pdfOrderItems.length, 8));
-      const renderedPages = await renderEditedPdfPages(previewItems, mergeMode, 900);
-      if (previewTokenRef.current !== runToken) return;
-      const previews = await Promise.all(renderedPages.map((page) => blobToDataUrl(page)));
-
-      setMergePreviewUrls(previews);
-    } catch {
-      setMergePreviewUrls([]);
-    } finally {
-      setIsGeneratingPreview(false);
-    }
-  }
-
   return (
     <div className="min-h-screen px-4 py-4 text-slate-900 sm:px-6 lg:px-8">
       {!isClient ? (
@@ -1065,7 +1071,7 @@ export default function Home() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="inline-grid grid-cols-2 rounded-lg border border-slate-200 bg-slate-100 p-1">
+                <div className="inline-grid grid-cols-3 rounded-lg border border-slate-200 bg-slate-100 p-1">
                   <button
                     type="button"
                     onClick={() => setWorkspaceMode("scan")}
@@ -1084,18 +1090,45 @@ export default function Home() {
                   >
                     Merge PDFs
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceMode("compress")}
+                    className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                      workspaceMode === "compress" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                    }`}
+                  >
+                    Compress
+                  </button>
                 </div>
 
               </div>
             </div>
             <div className="grid gap-3 bg-slate-50/70 p-4 text-sm sm:grid-cols-3 sm:p-5">
               <div>
-                <p className="font-semibold text-slate-950">{workspaceMode === "scan" ? "Scan workspace" : "PDF merge workspace"}</p>
-                <p className="mt-1 text-slate-500">{workspaceMode === "scan" ? `${items.length} pages loaded` : `${pdfFiles.length} PDFs loaded`}</p>
+                <p className="font-semibold text-slate-950">
+                  {workspaceMode === "scan"
+                    ? "Scan workspace"
+                    : workspaceMode === "pdf"
+                      ? "PDF merge workspace"
+                      : "Compression workspace"}
+                </p>
+                <p className="mt-1 text-slate-500">
+                  {workspaceMode === "scan"
+                    ? `${items.length} pages loaded`
+                    : workspaceMode === "pdf"
+                      ? `${pdfFiles.length} PDFs loaded`
+                      : "Client-side compression ready"}
+                </p>
               </div>
               <div>
                 <p className="font-semibold text-slate-950">Selection</p>
-                <p className="mt-1 text-slate-500">{workspaceMode === "scan" ? `${pdfOrderIds.length} pages in PDF` : `${pdfFiles.length} files in order`}</p>
+                <p className="mt-1 text-slate-500">
+                  {workspaceMode === "scan"
+                    ? `${pdfOrderIds.length} pages in PDF`
+                    : workspaceMode === "pdf"
+                      ? `${pdfFiles.length} files in order`
+                      : "Single file compression"}
+                </p>
               </div>
               <div>
                 <p className="font-semibold text-slate-950">Status</p>
@@ -1135,7 +1168,7 @@ export default function Home() {
                 openPdfPageEditor={openPdfPageEditor}
               />
             </section>
-          ) : (
+          ) : workspaceMode === "pdf" ? (
             <PdfMergePanel
               pdfFiles={pdfFiles}
               isProcessing={isProcessing}
@@ -1145,6 +1178,8 @@ export default function Home() {
               onMovePdf={movePdfFile}
               onReorderPdf={reorderPdfFile}
             />
+          ) : (
+            <CompressorPanel />
           )}
         </main>
       </div>

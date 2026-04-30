@@ -1,6 +1,7 @@
 export type CompressImageResult = {
   blob: Blob;
   iterations: number;
+  outputType: string;
   warning?: string;
 };
 
@@ -84,14 +85,14 @@ export async function compressImageFile(file: File, options: CompressImageOption
       }
 
       if (compressed.size <= options.targetBytes) {
-        return { blob: compressed, iterations: i + 1 };
+        return { blob: compressed, iterations: i + 1, outputType };
       }
     }
 
     if (bestBlob.size > options.targetBytes) {
       warning = "Could not hit target exactly. Downloading closest result.";
     }
-    return { blob: bestBlob, iterations: maxIterations, warning };
+    return { blob: bestBlob, iterations: maxIterations, outputType, warning };
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
