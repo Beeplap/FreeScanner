@@ -61,9 +61,8 @@ async function rasterizePdfPages(file: File, scale: number, quality: number) {
       const blob = await canvasToBlob(canvas, quality);
       canvas.remove();
 
-      const unit = viewport.scale / 72;
-      const widthPt = viewport.width / unit;
-      const heightPt = viewport.height / unit;
+      const widthPt = viewport.width / scale;
+      const heightPt = viewport.height / scale;
       pages.push({ blob, widthPt, heightPt });
     }
 

@@ -17,6 +17,7 @@ type Props = {
   startCropForOne: (id: string) => void;
   removeItem: (id: string) => void;
   onAddScans: (files?: FileList | null) => void;
+  onAddPhotos: (files?: FileList | null) => void;
   isProcessing: boolean;
 };
 
@@ -33,6 +34,7 @@ export default function ScanGrid({
   startCropForOne,
   removeItem,
   onAddScans,
+  onAddPhotos,
   isProcessing,
 }: Props) {
   const cardRefs = useRef(new Map<string, HTMLElement>());
@@ -131,6 +133,14 @@ export default function ScanGrid({
                 <UploadIcon />
                 Add
               </button>
+              <button
+                type="button"
+                onClick={() => onAddPhotos()}
+                disabled={isProcessing}
+                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Photos
+              </button>
             </div>
           </div>
         </div>
@@ -150,7 +160,7 @@ export default function ScanGrid({
               <UploadIcon />
             </div>
             <h3 className="mt-4 text-base font-semibold text-slate-950">No pages yet</h3>
-            <span className="mt-2 text-sm text-slate-500">Drop a file here or click to choose images/PDF.</span>
+            <span className="mt-2 text-sm text-slate-500">Drop a file here, choose files, or open phone gallery.</span>
           </button>
         ) : (
           displayItems.map((item) => {

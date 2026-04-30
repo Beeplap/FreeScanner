@@ -39,6 +39,7 @@ export default function Home() {
   const [pdfEditorImageSizes, setPdfEditorImageSizes] = useState<Record<string, ImageSize>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const pdfEditorPageRef = useRef<HTMLDivElement>(null);
   const itemsRef = useRef<ScanItem[]>([]);
@@ -962,6 +963,17 @@ export default function Home() {
         }}
       />
       <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*,.heic,.heif"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void handlePickedFiles(event.target.files);
+          event.target.value = "";
+        }}
+      />
+      <input
         ref={pdfInputRef}
         type="file"
         accept="application/pdf"
@@ -1158,6 +1170,13 @@ export default function Home() {
                     return;
                   }
                   fileInputRef.current?.click();
+                }}
+                onAddPhotos={(files) => {
+                  if (files && files.length > 0) {
+                    void handlePickedFiles(files);
+                    return;
+                  }
+                  photoInputRef.current?.click();
                 }}
                 isProcessing={isProcessing}
               />

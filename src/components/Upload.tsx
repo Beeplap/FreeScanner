@@ -6,10 +6,17 @@ type Props = {
   onFileSelected: (file: File) => void;
   disabled?: boolean;
   acceptedTypes?: string;
+  showPhotoPicker?: boolean;
 };
 
-export default function Upload({ onFileSelected, disabled = false, acceptedTypes = "image/*,application/pdf,.heic,.heif" }: Props) {
+export default function Upload({
+  onFileSelected,
+  disabled = false,
+  acceptedTypes = "image/*,application/pdf,.heic,.heif",
+  showPhotoPicker = true,
+}: Props) {
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const photoInputRef = React.useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = React.useState(false);
 
   function pickFirstFile(fileList: FileList | null) {
@@ -39,6 +46,17 @@ export default function Upload({ onFileSelected, disabled = false, acceptedTypes
           event.target.value = "";
         }}
       />
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*,.heic,.heif"
+        className="hidden"
+        disabled={disabled}
+        onChange={(event) => {
+          pickFirstFile(event.target.files);
+          event.target.value = "";
+        }}
+      />
       <button
         type="button"
         disabled={disabled}
@@ -58,6 +76,16 @@ export default function Upload({ onFileSelected, disabled = false, acceptedTypes
         <span className="text-base font-semibold text-slate-950">Drop a file here</span>
         <span className="mt-2 text-sm text-slate-500">or click to choose an image / PDF</span>
       </button>
+      {showPhotoPicker ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => photoInputRef.current?.click()}
+          className="mt-2 inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Open Photos/Gallery
+        </button>
+      ) : null}
     </>
   );
 }
