@@ -53,7 +53,7 @@ export default function ExportPanel({
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                1 per A4 page
+                1 per page
               </button>
               <button
                 type="button"
@@ -64,14 +64,12 @@ export default function ExportPanel({
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                2-up (front/back)
+                2 per Page
               </button>
             </div>
           </div>
 
-          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
-            {pdfOrderItems.length} selected
-          </div>
+          
         </div>
 
         <button
@@ -83,7 +81,7 @@ export default function ExportPanel({
         </button>
 
         <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
-          <p className="text-sm font-semibold text-slate-800">Preview (first {mergeMode === "twoUp" ? "2-up pages" : "pages"})</p>
+          <p className="text-sm font-semibold text-slate-800">Preview</p>
           {pdfOrderItems.length > 0 ? (
             <p className="mt-2 text-sm text-slate-500">Open a preview page to adjust image placement, crop, rotation, and scanner filters on the A4 sheet.</p>
           ) : null}
