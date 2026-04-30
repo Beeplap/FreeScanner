@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { imagesToA4TwoUpPDF, imagesToPDF, pdfToImages } from "../src/utils/pdfUtils";
+import { imagesToFullPageA4PDF, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 
@@ -16,9 +16,43 @@ type ScanItem = {
   createdAt: number;
   storagePath?: string | null;
   expiresAt?: number | null;
+  edit: PageEdit;
 };
 
 type CollageLayout = "grid" | "story" | "strip";
+type PageFilter = "none" | "grayscale" | "bw" | "enhanced";
+
+type PageEdit = {
+  offsetX: number;
+  offsetY: number;
+  zoom: number;
+  rotation: number;
+  crop: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+  filter: PageFilter;
+};
+
+const defaultPageEdit: PageEdit = {
+  offsetX: 0,
+  offsetY: 0,
+  zoom: 1,
+  rotation: 0,
+  crop: { top: 0, right: 0, bottom: 0, left: 0 },
+  filter: "none",
+};
+
+const A4_RATIO = 595.28 / 841.89;
+
+const filterOptions: { id: PageFilter; label: string }[] = [
+  { id: "none", label: "Original" },
+  { id: "grayscale", label: "Grayscale" },
+  { id: "bw", label: "Black & white" },
+  { id: "enhanced", label: "Enhanced B/W" },
+];
 
 const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
   { id: "grid", label: "Photo Grid", detail: "Best for notes and receipts" },
@@ -27,6 +61,7 @@ const collageOptions: { id: CollageLayout; label: string; detail: string }[] = [
 ];
 
 export default function Home() {
+  const [isClient, setIsClient] = useState(false);
   const [items, setItems] = useState<ScanItem[]>([]);
   const [pdfOrderIds, setPdfOrderIds] = useState<string[]>([]);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -45,6 +80,10 @@ export default function Home() {
   const [cropOpen, setCropOpen] = useState(false);
   const [cropQueue, setCropQueue] = useState<string[]>([]);
   const [cropCursor, setCropCursor] = useState(0);
+  const [pdfEditorPageIndex, setPdfEditorPageIndex] = useState<number | null>(null);
+  const [pdfEditorActiveId, setPdfEditorActiveId] = useState<string | null>(null);
+  const [pdfEditorPreviewUrl, setPdfEditorPreviewUrl] = useState<string | null>(null);
+  const [isRenderingPdfEditor, setIsRenderingPdfEditor] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -53,6 +92,7 @@ export default function Home() {
   const sessionIdRef = useRef<string | null>(null);
   const supabaseUserIdRef = useRef<string | null>(null);
   const dragPdfIdRef = useRef<string | null>(null);
+  const previewTokenRef = useRef<symbol | null>(null);
   const [draggingPdfId, setDraggingPdfId] = useState<string | null>(null);
   const [dragOverPdfId, setDragOverPdfId] = useState<string | null>(null);
 
@@ -74,6 +114,22 @@ export default function Home() {
     () => (cropTargetId ? items.find((item) => item.id === cropTargetId) ?? null : null),
     [cropTargetId, items]
   );
+  const pdfEditorItems = useMemo(() => {
+    if (pdfEditorPageIndex === null) return [];
+    if (mergeMode === "twoUp") {
+      return pdfOrderItems.slice(pdfEditorPageIndex * 2, pdfEditorPageIndex * 2 + 2);
+    }
+    return pdfOrderItems.slice(pdfEditorPageIndex, pdfEditorPageIndex + 1);
+  }, [mergeMode, pdfEditorPageIndex, pdfOrderItems]);
+
+  const pdfEditorActiveItem = useMemo(
+    () => (pdfEditorActiveId ? pdfEditorItems.find((item) => item.id === pdfEditorActiveId) ?? null : null),
+    [pdfEditorActiveId, pdfEditorItems]
+  );
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -146,6 +202,59 @@ export default function Home() {
       window.removeEventListener("beforeunload", handler);
     };
   }, [isSupabaseConfigured, supabaseReady]);
+
+  useEffect(() => {
+    if (pdfOrderIds.length === 0) {
+      const timeout = window.setTimeout(() => setMergePreviewUrls([]), 0);
+      return () => window.clearTimeout(timeout);
+    }
+
+    const timeout = window.setTimeout(() => {
+      void generateMergePreview();
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [items, pdfOrderIds, mergeMode]);
+
+  useEffect(() => {
+    if (pdfEditorPageIndex === null || pdfEditorItems.length === 0) {
+      setPdfEditorPreviewUrl(null);
+      return;
+    }
+
+    const runToken = Symbol("pdf-editor");
+    previewTokenRef.current = runToken;
+    let nextUrl: string | null = null;
+    setIsRenderingPdfEditor(true);
+
+    void renderEditedPdfPages(pdfEditorItems, mergeMode, 900)
+      .then(async (pages) => {
+        if (previewTokenRef.current !== runToken) return;
+        if (!pages[0]) return;
+        nextUrl = await blobToDataUrl(pages[0]);
+        if (previewTokenRef.current !== runToken) return;
+        setPdfEditorPreviewUrl((current) => {
+          return nextUrl ?? current;
+        });
+      })
+      .finally(() => {
+        if (previewTokenRef.current === runToken) {
+          setIsRenderingPdfEditor(false);
+        }
+      });
+  }, [pdfEditorItems, mergeMode, pdfEditorPageIndex]);
+
+  useEffect(() => {
+    if (pdfEditorPageIndex === null) return;
+    if (pdfEditorItems.length === 0) {
+      setPdfEditorPageIndex(null);
+      setPdfEditorActiveId(null);
+      return;
+    }
+    if (!pdfEditorActiveId || !pdfEditorItems.some((item) => item.id === pdfEditorActiveId)) {
+      setPdfEditorActiveId(pdfEditorItems[0].id);
+    }
+  }, [pdfEditorActiveId, pdfEditorItems, pdfEditorPageIndex]);
 
   function stopCamera() {
     if (streamRef.current) {
@@ -331,6 +440,7 @@ export default function Home() {
       createdAt: Date.now(),
       storagePath: null,
       expiresAt: null,
+      edit: { ...defaultPageEdit, crop: { ...defaultPageEdit.crop } },
     }));
 
     // Persist to Supabase (best-effort). If this fails, the app still works in-memory.
@@ -574,6 +684,7 @@ export default function Home() {
           originalFile: croppedBlob,
           previewUrl: newPreviewUrl,
           originalPreviewUrl: newPreviewUrl,
+          edit: { ...defaultPageEdit, crop: { ...defaultPageEdit.crop } },
         };
       })
     );
@@ -614,10 +725,52 @@ export default function Home() {
     });
 
     setPdfOrderIds((current) => current.filter((itemId) => itemId !== id));
+    setPdfEditorActiveId((current) => (current === id ? null : current));
 
     if (target) {
       void deleteItemFromSupabase(target);
     }
+  }
+
+  function openPdfPageEditor(pageIndex: number) {
+    const pageItems =
+      mergeMode === "twoUp"
+        ? pdfOrderItems.slice(pageIndex * 2, pageIndex * 2 + 2)
+        : pdfOrderItems.slice(pageIndex, pageIndex + 1);
+    if (pageItems.length === 0) return;
+    setPdfEditorPageIndex(pageIndex);
+    setPdfEditorActiveId(pageItems[0].id);
+    setStatusMessage("Adjust the A4 PDF page before downloading.");
+  }
+
+  function closePdfPageEditor() {
+    setPdfEditorPageIndex(null);
+    setPdfEditorActiveId(null);
+    setPdfEditorPreviewUrl(null);
+  }
+
+  function updatePageEdit(
+    id: string,
+    patch: Partial<Omit<PageEdit, "crop">> & { crop?: Partial<PageEdit["crop"]> }
+  ) {
+    setItems((current) =>
+      current.map((item) => {
+        if (item.id !== id) return item;
+        return {
+          ...item,
+          edit: {
+            ...item.edit,
+            ...patch,
+            crop: patch.crop ? { ...item.edit.crop, ...patch.crop } : item.edit.crop,
+          },
+        };
+      })
+    );
+    setMergePreviewUrls([]);
+  }
+
+  function resetPageEdit(id: string) {
+    updatePageEdit(id, { ...defaultPageEdit, crop: { ...defaultPageEdit.crop } });
   }
 
   async function exportPdf() {
@@ -627,13 +780,8 @@ export default function Home() {
     }
 
     setStatusMessage("Building your PDF...");
-    const blobsInOrder = pdfOrderItems.map((item) => item.file);
-    const blobsForExport = blobsInOrder;
-
-    const pdfBytes =
-      mergeMode === "twoUp"
-        ? await imagesToA4TwoUpPDF(blobsForExport)
-        : await imagesToPDF(blobsForExport);
+    const renderedPages = await renderEditedPdfPages(pdfOrderItems, mergeMode, 1800);
+    const pdfBytes = await imagesToFullPageA4PDF(renderedPages);
     const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
     const url = URL.createObjectURL(pdfBlob);
     const anchor = document.createElement("a");
@@ -652,94 +800,17 @@ export default function Home() {
     }
 
     const runToken = Symbol("preview");
-    (generateMergePreview as any)._token = runToken;
+    previewTokenRef.current = runToken;
 
     setIsGeneratingPreview(true);
     try {
-      const A4_WIDTH = 595.28;
-      const A4_HEIGHT = 841.89;
-      const W = 900;
-      const H = Math.round((W * A4_HEIGHT) / A4_WIDTH);
-      const margin = 44;
-      const gap = 34;
-
-      const orderedItems = pdfOrderItems;
-
-      const previews: string[] = [];
-
-      const drawContainImage = (
-        ctx: CanvasRenderingContext2D,
-        img: HTMLImageElement,
-        x: number,
-        y: number,
-        w: number,
-        h: number
-      ) => {
-        const iw = img.naturalWidth || img.width;
-        const ih = img.naturalHeight || img.height;
-        if (!iw || !ih) return;
-        const scale = Math.min(w / iw, h / ih);
-        const dw = iw * scale;
-        const dh = ih * scale;
-        const dx = x + (w - dw) / 2;
-        const dy = y + (h - dh) / 2;
-        ctx.drawImage(img, dx, dy, dw, dh);
-      };
-
-      const limitProduced =
-        mergeMode === "single" ? Math.min(orderedItems.length, 4) : Math.min(Math.ceil(orderedItems.length / 2), 4);
-
-      if (mergeMode === "single") {
-        for (let i = 0; i < limitProduced; i++) {
-          const item = orderedItems[i];
-          const img = await loadImage(item.previewUrl);
-
-          const canvas = document.createElement("canvas");
-          canvas.width = W;
-          canvas.height = H;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) continue;
-
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, W, H);
-
-          drawContainImage(ctx, img, margin, margin, W - margin * 2, H - margin * 2);
-
-          previews.push(canvas.toDataURL("image/jpeg", 0.9));
-
-          if ((generateMergePreview as any)._token !== runToken) return;
-        }
-      } else {
-        for (let pairIndex = 0; pairIndex < limitProduced; pairIndex++) {
-          const topItem = orderedItems[pairIndex * 2];
-          const bottomItem = orderedItems[pairIndex * 2 + 1];
-
-          const canvas = document.createElement("canvas");
-          canvas.width = W;
-          canvas.height = H;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) continue;
-
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, W, H);
-
-          const contentH = H - margin * 2;
-          const halfH = (contentH - gap) / 2;
-
-          if (topItem) {
-            const topImg = await loadImage(topItem.previewUrl);
-            drawContainImage(ctx, topImg, margin, margin, W - margin * 2, halfH);
-          }
-          if (bottomItem) {
-            const bottomImg = await loadImage(bottomItem.previewUrl);
-            drawContainImage(ctx, bottomImg, margin, margin + halfH + gap, W - margin * 2, halfH);
-          }
-
-          previews.push(canvas.toDataURL("image/jpeg", 0.9));
-
-          if ((generateMergePreview as any)._token !== runToken) return;
-        }
-      }
+      const previewItems =
+        mergeMode === "single"
+          ? pdfOrderItems.slice(0, 4)
+          : pdfOrderItems.slice(0, Math.min(pdfOrderItems.length, 8));
+      const renderedPages = await renderEditedPdfPages(previewItems, mergeMode, 900);
+      if (previewTokenRef.current !== runToken) return;
+      const previews = await Promise.all(renderedPages.map((page) => blobToDataUrl(page)));
 
       setMergePreviewUrls(previews);
     } catch {
@@ -751,6 +822,13 @@ export default function Home() {
 
   return (
     <div className="min-h-screen px-4 py-4 text-slate-900 sm:px-6 lg:px-8">
+      {!isClient ? (
+        <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-8 text-sm text-slate-500">
+          Loading FreeScanner...
+        </div>
+      ) : null}
+      {isClient ? (
+        <>
       <input
         ref={fileInputRef}
         type="file"
@@ -980,6 +1058,123 @@ export default function Home() {
                   <p className="text-sm font-semibold text-slate-800">
                     Preview (first {mergeMode === "twoUp" ? "2-up pages" : "pages"})
                   </p>
+                  {selectedEditorItem ? (
+                    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
+                            Editing page
+                          </p>
+                          <p className="mt-1 truncate text-sm font-semibold text-slate-900">
+                            {selectedEditorItem.name}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => resetPageEdit(selectedEditorItem.id)}
+                          className="rounded-xl bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-emerald-100 hover:bg-slate-50"
+                        >
+                          Reset
+                        </button>
+                      </div>
+
+                      <div className="mt-3 grid gap-3">
+                        <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                          Size
+                          <input
+                            type="range"
+                            min="0.35"
+                            max="2.5"
+                            step="0.01"
+                            value={selectedEditorItem.edit.zoom}
+                            onChange={(e) =>
+                              updatePageEdit(selectedEditorItem.id, { zoom: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                            Left / right
+                            <input
+                              type="range"
+                              min="-0.6"
+                              max="0.6"
+                              step="0.01"
+                              value={selectedEditorItem.edit.offsetX}
+                              onChange={(e) =>
+                                updatePageEdit(selectedEditorItem.id, { offsetX: Number(e.target.value) })
+                              }
+                            />
+                          </label>
+                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                            Up / down
+                            <input
+                              type="range"
+                              min="-0.6"
+                              max="0.6"
+                              step="0.01"
+                              value={selectedEditorItem.edit.offsetY}
+                              onChange={(e) =>
+                                updatePageEdit(selectedEditorItem.id, { offsetY: Number(e.target.value) })
+                              }
+                            />
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                            Rotate
+                            <input
+                              type="range"
+                              min="-180"
+                              max="180"
+                              step="1"
+                              value={selectedEditorItem.edit.rotation}
+                              onChange={(e) =>
+                                updatePageEdit(selectedEditorItem.id, { rotation: Number(e.target.value) })
+                              }
+                            />
+                          </label>
+                          <label className="grid gap-1 text-xs font-semibold text-slate-700">
+                            Filter
+                            <select
+                              value={selectedEditorItem.edit.filter}
+                              onChange={(e) =>
+                                updatePageEdit(selectedEditorItem.id, { filter: e.target.value as PageFilter })
+                              }
+                              className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs"
+                            >
+                              {filterOptions.map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(["top", "right", "bottom", "left"] as const).map((side) => (
+                            <label key={side} className="grid gap-1 text-xs font-semibold capitalize text-slate-700">
+                              Crop {side}
+                              <input
+                                type="range"
+                                min="0"
+                                max="0.45"
+                                step="0.01"
+                                value={selectedEditorItem.edit.crop[side]}
+                                onChange={(e) =>
+                                  updatePageEdit(selectedEditorItem.id, {
+                                    crop: { [side]: Number(e.target.value) } as Partial<PageEdit["crop"]>,
+                                  })
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : pdfOrderItems.length > 0 ? (
+                    <p className="mt-2 text-sm text-slate-500">Choose a preview page below to adjust its A4 layout.</p>
+                  ) : null}
                   {pdfOrderItems.length === 0 ? (
                     <p className="mt-2 text-sm text-slate-500">Select images to preview merged A4 output.</p>
                   ) : isGeneratingPreview ? (
@@ -1007,6 +1202,34 @@ export default function Home() {
                         >
                           <div className="absolute left-2 top-2 z-10 rounded-full bg-slate-950 px-2 py-0.5 text-[11px] font-semibold text-white">
                             {pageNumber}
+                          </div>
+                          <div className="absolute right-2 top-2 z-20 flex gap-1">
+                            {topItem ? (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedEditorId(topItem.id)}
+                                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm ${
+                                  selectedEditorId === topItem.id
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-white text-slate-700"
+                                }`}
+                              >
+                                {mergeMode === "twoUp" ? "Edit top" : "Edit"}
+                              </button>
+                            ) : null}
+                            {bottomItem ? (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedEditorId(bottomItem.id)}
+                                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold shadow-sm ${
+                                  selectedEditorId === bottomItem.id
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-white text-slate-700"
+                                }`}
+                              >
+                                Edit bottom
+                              </button>
+                            ) : null}
                           </div>
 
                           <div className="sm:hidden">
@@ -1132,8 +1355,182 @@ export default function Home() {
           </div>
         </div>
       ) : null}
+        </>
+      ) : null}
     </div>
   );
+}
+
+async function renderEditedPdfPages(
+  items: ScanItem[],
+  mergeMode: "single" | "twoUp",
+  width: number
+) {
+  const height = Math.round(width / A4_RATIO);
+  const pages: Blob[] = [];
+
+  if (mergeMode === "single") {
+    for (const item of items) {
+      const canvas = createA4Canvas(width, height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+
+      drawPageBackground(ctx, width, height);
+      await drawEditedItem(ctx, item, {
+        x: width * 0.08,
+        y: height * 0.065,
+        w: width * 0.84,
+        h: height * 0.87,
+      });
+
+      pages.push(await canvasToBlob(canvas));
+    }
+    return pages;
+  }
+
+  for (let i = 0; i < items.length; i += 2) {
+    const canvas = createA4Canvas(width, height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) continue;
+
+    drawPageBackground(ctx, width, height);
+
+    const marginX = width * 0.07;
+    const marginY = height * 0.055;
+    const gap = height * 0.035;
+    const frameW = width - marginX * 2;
+    const frameH = (height - marginY * 2 - gap) / 2;
+
+    if (items[i]) {
+      await drawEditedItem(ctx, items[i], { x: marginX, y: marginY, w: frameW, h: frameH });
+    }
+
+    if (items[i + 1]) {
+      await drawEditedItem(ctx, items[i + 1], {
+        x: marginX,
+        y: marginY + frameH + gap,
+        w: frameW,
+        h: frameH,
+      });
+    }
+
+    pages.push(await canvasToBlob(canvas));
+  }
+
+  return pages;
+}
+
+function createA4Canvas(width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function drawPageBackground(ctx: CanvasRenderingContext2D, width: number, height: number) {
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+}
+
+async function drawEditedItem(
+  ctx: CanvasRenderingContext2D,
+  item: ScanItem,
+  frame: { x: number; y: number; w: number; h: number }
+) {
+  const image = await loadImage(item.previewUrl);
+  const crop = item.edit.crop;
+  const cropLeft = clamp(crop.left, 0, 0.48);
+  const cropTop = clamp(crop.top, 0, 0.48);
+  const cropRight = clamp(crop.right, 0, 0.48);
+  const cropBottom = clamp(crop.bottom, 0, 0.48);
+
+  const naturalW = image.naturalWidth || image.width;
+  const naturalH = image.naturalHeight || image.height;
+  const sx = naturalW * cropLeft;
+  const sy = naturalH * cropTop;
+  const sw = Math.max(1, naturalW * (1 - cropLeft - cropRight));
+  const sh = Math.max(1, naturalH * (1 - cropTop - cropBottom));
+
+  const fitScale = Math.min(frame.w / sw, frame.h / sh);
+  const drawW = sw * fitScale * item.edit.zoom;
+  const drawH = sh * fitScale * item.edit.zoom;
+  const centerX = frame.x + frame.w / 2 + item.edit.offsetX * frame.w;
+  const centerY = frame.y + frame.h / 2 + item.edit.offsetY * frame.h;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(frame.x, frame.y, frame.w, frame.h);
+  ctx.clip();
+  ctx.translate(centerX, centerY);
+  ctx.rotate((item.edit.rotation * Math.PI) / 180);
+  ctx.filter = getCanvasFilter(item.edit.filter);
+  ctx.drawImage(image, sx, sy, sw, sh, -drawW / 2, -drawH / 2, drawW, drawH);
+  ctx.restore();
+  ctx.filter = "none";
+
+  if (item.edit.filter === "bw" || item.edit.filter === "enhanced") {
+    applyScannerThreshold(ctx, frame, item.edit.filter);
+  }
+}
+
+function getCanvasFilter(filter: PageFilter) {
+  if (filter === "grayscale") return "grayscale(1)";
+  if (filter === "bw") return "grayscale(1) contrast(1.8)";
+  if (filter === "enhanced") return "grayscale(1) contrast(2.4) brightness(1.08)";
+  return "none";
+}
+
+function applyScannerThreshold(
+  ctx: CanvasRenderingContext2D,
+  frame: { x: number; y: number; w: number; h: number },
+  filter: Extract<PageFilter, "bw" | "enhanced">
+) {
+  const x = Math.max(0, Math.round(frame.x));
+  const y = Math.max(0, Math.round(frame.y));
+  const w = Math.max(1, Math.round(frame.w));
+  const h = Math.max(1, Math.round(frame.h));
+  const imageData = ctx.getImageData(x, y, w, h);
+  const data = imageData.data;
+  const threshold = filter === "enhanced" ? 185 : 150;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const luminance = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+    const value = luminance > threshold ? 255 : 0;
+    data[i] = value;
+    data[i + 1] = value;
+    data[i + 2] = value;
+  }
+
+  ctx.putImageData(imageData, x, y);
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Failed to render PDF page"));
+          return;
+        }
+        resolve(blob);
+      },
+      "image/jpeg",
+      0.94
+    );
+  });
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read preview"));
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function renderCollage(items: ScanItem[], layout: CollageLayout) {

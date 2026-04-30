@@ -29,6 +29,23 @@ export async function imagesToPDF(images: Blob[]): Promise<Uint8Array> {
   return pdfDoc.save();
 }
 
+export async function imagesToFullPageA4PDF(images: Blob[]): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
+  const A4_WIDTH = 595.28;
+  const A4_HEIGHT = 841.89;
+
+  for (const blob of images) {
+    const arrayBuffer = await blob.arrayBuffer();
+    const embedded = blob.type === "image/png"
+      ? await pdfDoc.embedPng(arrayBuffer)
+      : await pdfDoc.embedJpg(arrayBuffer);
+    const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+    page.drawImage(embedded, { x: 0, y: 0, width: A4_WIDTH, height: A4_HEIGHT });
+  }
+
+  return pdfDoc.save();
+}
+
 export async function imagesToA4TwoUpPDF(images: Blob[]): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const A4_WIDTH = 595.28;
