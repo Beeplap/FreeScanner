@@ -5,6 +5,23 @@
 import { PDFDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
+export async function getPdfPageCount(file: File): Promise<number> {
+  const pdf = await PDFDocument.load(await file.arrayBuffer());
+  return pdf.getPageCount();
+}
+
+export async function mergePdfFiles(files: File[]): Promise<Uint8Array> {
+  const mergedPdf = await PDFDocument.create();
+
+  for (const file of files) {
+    const sourcePdf = await PDFDocument.load(await file.arrayBuffer());
+    const copiedPages = await mergedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+    copiedPages.forEach((page) => mergedPdf.addPage(page));
+  }
+
+  return mergedPdf.save();
+}
+
 export async function imagesToPDF(images: Blob[]): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const A4_WIDTH = 595.28;

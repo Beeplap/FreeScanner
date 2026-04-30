@@ -1,19 +1,24 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { imagesToFullPageA4PDF, pdfToImages } from "../src/utils/pdfUtils";
+import { getPdfPageCount, imagesToFullPageA4PDF, mergePdfFiles, pdfToImages } from "../src/utils/pdfUtils";
 import CropModal from "../src/components/CropModal";
 import { supabase, SUPABASE_SCANS_BUCKET, SUPABASE_SCAN_PAGES_TABLE } from "../src/lib/supabaseClient";
 import CameraModal from "../src/components/scanner/CameraModal";
 import ExportPanel from "../src/components/scanner/ExportPanel";
+import PdfMergePanel from "../src/components/scanner/PdfMergePanel";
 import PdfEditorModal from "../src/components/scanner/PdfEditorModal";
 import ScanGrid from "../src/components/scanner/ScanGrid";
 import { A4_RATIO, defaultPageEdit } from "../src/components/scanner/types";
-import type { EditorBox, EditorFrame, ImageSize, MergeMode, PageEdit, PageFilter, ScanItem, TransformHandle } from "../src/components/scanner/types";
+import type { EditorBox, EditorFrame, ImageSize, MergeMode, PageEdit, PageFilter, PdfMergeItem, ScanItem, TransformHandle } from "../src/components/scanner/types";
+
+type WorkspaceMode = "scan" | "pdf";
 
 export default function Home() {
   const [isClient, setIsClient] = useState(false);
   const [items, setItems] = useState<ScanItem[]>([]);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("scan");
+  const [pdfFiles, setPdfFiles] = useState<PdfMergeItem[]>([]);
   const [pdfOrderIds, setPdfOrderIds] = useState<string[]>([]);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -37,6 +42,7 @@ export default function Home() {
   const [pdfEditorImageSizes, setPdfEditorImageSizes] = useState<Record<string, ImageSize>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const pdfEditorPageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -498,6 +504,84 @@ export default function Home() {
     }
   }
 
+  async function handlePickedPdfFiles(fileList: FileList | null) {
+    if (!fileList?.length) return;
+
+    const files = Array.from(fileList).filter((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
+    if (files.length === 0) {
+      setStatusMessage("Choose PDF files to merge.");
+      return;
+    }
+
+    setWorkspaceMode("pdf");
+    setIsProcessing(true);
+    setStatusMessage("Reading PDF details...");
+
+    try {
+      const nextItems = await Promise.all(
+        files.map(async (file) => ({
+          id: crypto.randomUUID(),
+          file,
+          name: file.name,
+          size: file.size,
+          pageCount: await getPdfPageCount(file).catch(() => null),
+          createdAt: Date.now(),
+        }))
+      );
+
+      setPdfFiles((current) => [...current, ...nextItems]);
+      setStatusMessage(`${nextItems.length} PDF${nextItems.length === 1 ? "" : "s"} added to merge queue.`);
+    } catch {
+      setStatusMessage("Could not read one of the PDFs. Try a standard, unlocked PDF.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  function removePdfFile(id: string) {
+    setPdfFiles((current) => current.filter((item) => item.id !== id));
+  }
+
+  function movePdfFile(id: string, direction: -1 | 1) {
+    setPdfFiles((current) => {
+      const from = current.findIndex((item) => item.id === id);
+      if (from === -1) return current;
+      const to = from + direction;
+      if (to < 0 || to >= current.length) return current;
+
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }
+
+  async function exportMergedPdfs() {
+    if (pdfFiles.length < 2) {
+      setStatusMessage("Add at least two PDFs to merge.");
+      return;
+    }
+
+    setIsProcessing(true);
+    setStatusMessage("Merging PDFs...");
+
+    try {
+      const pdfBytes = await mergePdfFiles(pdfFiles.map((item) => item.file));
+      const pdfBlob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
+      const url = URL.createObjectURL(pdfBlob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "merged-documents.pdf";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatusMessage("Merged PDF downloaded successfully.");
+    } catch {
+      setStatusMessage("Could not merge the PDFs. Try unlocked PDF files.");
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   async function handleCameraOpen() {
     setCameraError(null);
     stopCamera();
@@ -903,63 +987,122 @@ export default function Home() {
           event.target.value = "";
         }}
       />
+      <input
+        ref={pdfInputRef}
+        type="file"
+        accept="application/pdf"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          void handlePickedPdfFiles(event.target.files);
+          event.target.value = "";
+        }}
+      />
 
       <div className="mx-auto max-w-7xl">
-        <main className="space-y-4">
-          <header className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-linear-to-br from-emerald-400 via-teal-400 to-sky-500 text-lg font-semibold text-white">
-                FS
-              </div>
+        <main className="space-y-5">
+          <header className="panel p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <div className="display-font text-xl font-semibold">FreeScanner</div>
-                <div className="text-sm text-slate-500">{items.length} page{items.length === 1 ? "" : "s"}</div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Document Workspace</p>
+                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">FreeScanner</h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  Build editable scan PDFs or combine existing PDF files in one focused workspace.
+                </p>
               </div>
-            </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded-2xl bg-sky-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-900"
-              >
-                Import
-              </button>
-              <button
-                onClick={() => void handleCameraOpen()}
-                className="rounded-2xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
-              >
-                Camera
-              </button>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceMode("scan")}
+                    className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                      workspaceMode === "scan" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                    }`}
+                  >
+                    Scan to PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWorkspaceMode("pdf")}
+                    className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                      workspaceMode === "pdf" ? "bg-white text-slate-950 shadow-sm" : "text-slate-600 hover:text-slate-950"
+                    }`}
+                  >
+                    Merge PDFs
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {workspaceMode === "scan" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                      >
+                        Import scans
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCameraOpen()}
+                        className="rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                      >
+                        Camera
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => pdfInputRef.current?.click()}
+                      className="rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                    >
+                      Add PDFs
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </header>
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <ScanGrid
-              items={items}
-              displayItems={displayItems}
-              pdfOrderIds={pdfOrderIds}
-              mergeMode={mergeMode}
-              draggingPdfId={draggingPdfId}
-              dragOverPdfId={dragOverPdfId}
-              onReorderHandlePointerDown={onReorderHandlePointerDown}
-              onReorderHandlePointerMove={onReorderHandlePointerMove}
-              onReorderHandlePointerEnd={onReorderHandlePointerEnd}
-              startCropForOne={startCropForOne}
-              removeItem={removeItem}
-            />
-            <ExportPanel
-              mergeMode={mergeMode}
-              setMergeMode={setMergeMode}
-              pdfOrderItems={pdfOrderItems}
-              previewOrderedItems={previewOrderedItems}
-              mergePreviewUrls={mergePreviewUrls}
-              isGeneratingPreview={isGeneratingPreview}
+          {workspaceMode === "scan" ? (
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <ScanGrid
+                items={items}
+                displayItems={displayItems}
+                pdfOrderIds={pdfOrderIds}
+                mergeMode={mergeMode}
+                draggingPdfId={draggingPdfId}
+                dragOverPdfId={dragOverPdfId}
+                onReorderHandlePointerDown={onReorderHandlePointerDown}
+                onReorderHandlePointerMove={onReorderHandlePointerMove}
+                onReorderHandlePointerEnd={onReorderHandlePointerEnd}
+                startCropForOne={startCropForOne}
+                removeItem={removeItem}
+              />
+              <ExportPanel
+                mergeMode={mergeMode}
+                setMergeMode={setMergeMode}
+                pdfOrderItems={pdfOrderItems}
+                previewOrderedItems={previewOrderedItems}
+                mergePreviewUrls={mergePreviewUrls}
+                isGeneratingPreview={isGeneratingPreview}
+                isProcessing={isProcessing}
+                statusMessage={statusMessage}
+                exportPdf={exportPdf}
+                openPdfPageEditor={openPdfPageEditor}
+              />
+            </section>
+          ) : (
+            <PdfMergePanel
+              pdfFiles={pdfFiles}
               isProcessing={isProcessing}
-              statusMessage={statusMessage}
-              exportPdf={exportPdf}
-              openPdfPageEditor={openPdfPageEditor}
+              onAddPdfs={() => pdfInputRef.current?.click()}
+              onMergePdfs={exportMergedPdfs}
+              onRemovePdf={removePdfFile}
+              onMovePdf={movePdfFile}
             />
-          </section>
+          )}
         </main>
       </div>
 
@@ -1244,4 +1387,3 @@ function loadImage(src: string) {
     image.src = src;
   });
 }
-

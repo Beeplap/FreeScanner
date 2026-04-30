@@ -30,6 +30,15 @@ export type ScanItem = {
   edit: PageEdit;
 };
 
+export type PdfMergeItem = {
+  id: string;
+  file: File;
+  name: string;
+  size: number;
+  pageCount: number | null;
+  createdAt: number;
+};
+
 export type ImageSize = { w: number; h: number };
 export type EditorFrame = { x: number; y: number; w: number; h: number };
 export type EditorBox = EditorFrame & { rotation: number };
